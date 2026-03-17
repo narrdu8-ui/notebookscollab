@@ -1,0 +1,1481 @@
+<!DOCTYPE html>
+<html lang="fr" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Collab Notebook Python (Auto-hébergé)</title>
+  
+  <!-- Tailwind CSS pour le style -->
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            primary: {
+              500: 'var(--color-primary-500)',
+              600: 'var(--color-primary-600)',
+              700: 'var(--color-primary-700)',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <script src="/socket.io/socket.io.js"></script>
+  
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  </script>
+  <style>
+    /* Variables de couleurs personnalisables */
+    :root {
+      --color-primary-500: #6366f1; 
+      --color-primary-600: #4f46e5;
+      --color-primary-700: #4338ca;
+    }
+    .theme-emerald { --color-primary-500: #10b981; --color-primary-600: #059669; --color-primary-700: #047857; }
+    .theme-rose { --color-primary-500: #f43f5e; --color-primary-600: #e11d48; --color-primary-700: #be123c; }
+    .theme-amber { --color-primary-500: #f59e0b; --color-primary-600: #d97706; --color-primary-700: #b45309; }
+    .theme-purple { --color-primary-500: #a855f7; --color-primary-600: #9333ea; --color-primary-700: #7e22ce; }
+
+    /* Cache la scrollbar horizontale des barres d'outils sur mobile */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    
+    /* Scrollbar personnalisée style VS Code pour les sorties de console */
+    .custom-scrollbar::-webkit-scrollbar { height: 10px; width: 10px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.3); }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(128, 128, 128, 0.5); }
+    .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); }
+    .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); }
+  </style>
+  
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/map">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.292.0?deps=react@18.2.0",
+        "marked": "https://esm.sh/marked@10.0.0"
+      }
+    }
+  </script>
+</head>
+<body class="bg-gray-50 dark:bg-[#1e1e1e] text-slate-900 dark:text-[#cccccc] m-0 p-0 transition-colors duration-200">
+  
+  <div id="root">
+    <div style="display:flex; height:100vh; align-items:center; justify-content:center; color:#64748b; flex-direction:column; gap:1rem;">
+      <svg class="animate-spin h-8 w-8 text-primary-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+      <p>Compilation de l'application React... Veuillez patienter.</p>
+    </div>
+  </div>
+
+  <script type="text/babel" data-type="module">
+    import React, { useState, useEffect, useRef } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { Play, Plus, Trash2, Loader2, Users, Terminal, Code2, CheckCircle2, ArrowLeft, Share2, BookOpen, User, Lock, Edit2, Download, ArrowUp, ArrowDown, XCircle, Upload, LogOut, Key, Unlock, X, RotateCcw, RotateCw, Image as ImageIcon, Settings, Moon, Sun, Type } from 'lucide-react';
+    import { marked } from 'marked';
+
+    const DB_URL = 'db.json';       
+    const API_URL = 'server.php';   
+
+    const generateUUID = () => {
+      if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+      });
+    };
+
+    const safeMarked = (text) => {
+      try {
+        if (typeof marked !== 'undefined' && typeof marked.parse === 'function') return marked.parse(text);
+        else if (typeof marked === 'function') return marked(text);
+        return text; 
+      } catch(e) { return text; }
+    };
+
+    const hashPassword = async (password) => {
+      if (typeof crypto !== 'undefined' && crypto.subtle) {
+        const msgBuffer = new TextEncoder().encode(password);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+      } else {
+        let hash = 0;
+        for (let i = 0; i < password.length; i++) {
+            const char = password.charCodeAt(i);
+            hash = ((hash << 5) - hash) + char;
+            hash = hash & hash;
+        }
+        return hash.toString();
+      }
+    };
+
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      if (navigator.clipboard.readText) {
+        const originalReadText = navigator.clipboard.readText.bind(navigator.clipboard);
+        navigator.clipboard.readText = () => {
+          return originalReadText().catch(err => {
+            console.warn("⚠️ Collage via menu contextuel bloqué. Utilisez Ctrl+V.");
+            return Promise.resolve("");
+          });
+        };
+      }
+      if (navigator.clipboard.writeText) {
+        const originalWriteText = navigator.clipboard.writeText.bind(navigator.clipboard);
+        navigator.clipboard.writeText = (text) => {
+          return originalWriteText(text).catch(err => {
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed";
+            textArea.style.left = "-999999px";
+            textArea.style.top = "-999999px";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try { document.execCommand('copy'); } catch (fallbackErr) { console.error("Échec", fallbackErr); }
+            textArea.remove();
+            return Promise.resolve();
+          });
+        };
+      }
+    }
+
+    let pyodidePromise = null;
+    let monacoPromise = null;
+
+    const usePyodide = () => {
+      const [pyodide, setPyodide] = useState(null);
+      const [isLoading, setIsLoading] = useState(true);
+
+      useEffect(() => {
+        let isMounted = true;
+        window.activeP5Instances = window.activeP5Instances || {};
+        window.start_p5_instance = (sketchProxy) => {
+          const targetId = window.current_p5_target;
+          if (window.activeP5Instances[targetId]) {
+            window.activeP5Instances[targetId].remove();
+          }
+          const container = document.getElementById(targetId);
+          if (container) {
+            container.innerHTML = '';
+            try {
+              if (typeof window.p5 !== 'function') throw new Error("p5.js introuvable.");
+              window.activeP5Instances[targetId] = new window.p5((p) => sketchProxy(p), container);
+            } catch(e) {
+              console.error("Erreur p5:", e);
+              throw e;
+            }
+          }
+        };
+
+        const load = async () => {
+          try {
+            if (!window.p5_promise) {
+              window.p5_promise = fetch('https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js')
+                .then(res => res.text())
+                .then(text => {
+                  const script = document.createElement('script');
+                  script.textContent = `(function() { \nvar define = undefined; \nvar exports = undefined; \nvar module = undefined;\n${text}\n})();`;
+                  document.head.appendChild(script);
+                });
+            }
+
+            if (!pyodidePromise) {
+              pyodidePromise = new Promise((resolve, reject) => {
+                if (typeof globalThis.loadPyodide === 'function') {
+                  resolve(globalThis.loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.25.0/full/" }));
+                  return;
+                }
+                const script = document.createElement('script');
+                script.src = 'https://cdn.jsdelivr.net/pyodide/v0.25.0/full/pyodide.js';
+                script.crossOrigin = 'anonymous';
+                script.onload = () => {
+                  let attempts = 0;
+                  const interval = setInterval(() => {
+                    attempts++;
+                    if (typeof globalThis.loadPyodide === 'function') {
+                      clearInterval(interval);
+                      resolve(globalThis.loadPyodide({ indexURL: "https://cdn.jsdelivr.net/pyodide/v0.25.0/full/" }));
+                    } else if (attempts > 50) {
+                      clearInterval(interval);
+                      reject(new Error("loadPyodide introuvable."));
+                    }
+                  }, 100);
+                };
+                script.onerror = () => reject(new Error("Erreur réseau pyodide"));
+                document.head.appendChild(script);
+              });
+            }
+
+            await window.p5_promise;
+            const py = await pyodidePromise;
+            
+            if (isMounted) {
+              await py.loadPackage("micropip");
+              const p5_code = `
+import js
+import __main__
+from pyodide.ffi import create_proxy
+
+_current_p = None
+
+def make_proxy_func(name):
+    def wrapper(*args, **kwargs):
+        if _current_p:
+            func = getattr(_current_p, name)
+            return func(*args, **kwargs)
+    return wrapper
+
+funcs = ['createCanvas', 'background', 'ellipse', 'rect', 'circle', 'fill', 'stroke', 'strokeWeight', 'noFill', 'noStroke', 'line', 'text', 'textSize', 'random', 'clear', 'color', 'arc', 'triangle', 'quad', 'point', 'push', 'pop', 'translate', 'rotate', 'scale', 'map', 'dist', 'frameRate', 'sin', 'cos', 'tan', 'loadImage', 'image', 'createVector']
+
+for name in funcs:
+    globals()[name] = make_proxy_func(name)
+
+mouseX, mouseY, pmouseX, pmouseY, width, height, frameCount, keyCode = 0, 0, 0, 0, 0, 0, 0, 0
+mouseIsPressed, keyIsPressed, key = False, False, ''
+
+def run():
+    setup_fn = getattr(__main__, 'setup', None)
+    draw_fn = getattr(__main__, 'draw', None)
+    def sketch(p):
+        global _current_p
+        _current_p = p
+        def update_vars():
+            __main__.mouseX = getattr(p, 'mouseX', 0)
+            __main__.mouseY = getattr(p, 'mouseY', 0)
+            __main__.pmouseX = getattr(p, 'pmouseX', 0)
+            __main__.pmouseY = getattr(p, 'pmouseY', 0)
+            __main__.width = getattr(p, 'width', 0)
+            __main__.height = getattr(p, 'height', 0)
+            __main__.frameCount = getattr(p, 'frameCount', 0)
+            __main__.mouseIsPressed = getattr(p, 'mouseIsPressed', False)
+            __main__.keyIsPressed = getattr(p, 'keyIsPressed', False)
+            __main__.key = getattr(p, 'key', '')
+            __main__.keyCode = getattr(p, 'keyCode', 0)
+
+        def _setup():
+            update_vars()
+            if setup_fn: setup_fn()
+        def _draw():
+            update_vars()
+            if draw_fn: draw_fn()
+            
+        p.setup = create_proxy(_setup)
+        if draw_fn: p.draw = create_proxy(_draw)
+
+    js.start_p5_instance(create_proxy(sketch))`;
+              py.globals.set('p5_code', p5_code);
+              await py.runPythonAsync(`with open("p5.py", "w") as f:\n    f.write(p5_code)`);
+              setPyodide(py);
+              setIsLoading(false);
+            }
+          } catch (error) {
+            console.error("Erreur Pyodide:", error);
+            if (isMounted) setIsLoading(false);
+          }
+        };
+        load();
+        return () => { isMounted = false; };
+      }, []);
+
+      return { pyodide, isPyodideLoading: isLoading };
+    };
+
+    const useMonaco = () => {
+      const [isReady, setIsReady] = useState(false);
+      useEffect(() => {
+        let isMounted = true;
+        if (!monacoPromise) {
+          monacoPromise = new Promise((resolve, reject) => {
+            if (window.monaco) { resolve(true); return; }
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js';
+            script.crossOrigin = 'anonymous';
+            script.onload = () => {
+              window.MonacoEnvironment = {
+                getWorkerUrl: function (workerId, label) {
+                  return `data:text/javascript;charset=utf-8,${encodeURIComponent(`
+                    self.MonacoEnvironment = { baseUrl: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/' };
+                    importScripts('https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/base/worker/workerMain.js');`
+                  )}`;
+                }
+              };
+              window.require.config({ 
+                paths: { 
+                  'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs',
+                  'error-stack-parser': 'https://cdn.jsdelivr.net/npm/error-stack-parser@2.1.4/dist/error-stack-parser.min',
+                  'stackframe': 'https://cdn.jsdelivr.net/npm/stackframe@1.3.4/dist/stackframe.min'
+                } 
+              });
+              window.require(['vs/editor/editor.main'], () => resolve(true), (err) => reject(err));
+            };
+            script.onerror = () => reject(new Error("Erreur de chargement du script Monaco"));
+            document.body.appendChild(script);
+          });
+        }
+        monacoPromise.then(() => { if (isMounted) setIsReady(true); }).catch(console.error);
+        return () => { isMounted = false; };
+      }, []);
+      return isReady;
+    };
+
+    const MonacoEditor = ({ value, onChange, onFocus, onBlur, language = 'python', readOnly = false, isDark }) => {
+      const editorContainerRef = useRef(null);
+      const editorRef = useRef(null);
+      const [editorHeight, setEditorHeight] = useState(200);
+
+      const startResize = (e) => {
+        e.preventDefault();
+        const startY = e.clientY;
+        const startHeight = editorHeight;
+        const onMouseMove = (moveEvent) => setEditorHeight(Math.max(80, startHeight + (moveEvent.clientY - startY)));
+        const onMouseUp = () => {
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', onMouseUp);
+          document.body.style.cursor = 'default';
+        };
+        document.body.style.cursor = 'row-resize';
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      };
+
+      useEffect(() => {
+        if (editorContainerRef.current && !editorRef.current && window.monaco) {
+          editorRef.current = window.monaco.editor.create(editorContainerRef.current, {
+            value: value,
+            language: language,
+            theme: isDark ? 'vs-dark' : 'vs',
+            minimap: { enabled: false },
+            automaticLayout: true,
+            scrollBeyondLastLine: false,
+            fontSize: 14,
+            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+            padding: { top: 12, bottom: 12 },
+            readOnly: readOnly,
+            renderLineHighlight: 'none'
+          });
+          editorRef.current.onDidChangeModelContent(() => onChange(editorRef.current.getValue()));
+          editorRef.current.onDidFocusEditorText(onFocus);
+          editorRef.current.onDidBlurEditorText(onBlur);
+        }
+        return () => {
+          if (editorRef.current) {
+            editorRef.current.dispose();
+            editorRef.current = null;
+          }
+        };
+      }, []);
+
+      useEffect(() => {
+        if (editorRef.current && window.monaco) {
+          window.monaco.editor.setModelLanguage(editorRef.current.getModel(), language);
+        }
+      }, [language]);
+
+      useEffect(() => {
+        if (editorRef.current && window.monaco) {
+          editorRef.current.updateOptions({ readOnly: readOnly });
+        }
+      }, [readOnly]);
+
+      useEffect(() => {
+        if (editorRef.current && window.monaco) {
+          window.monaco.editor.setTheme(isDark ? 'vs-dark' : 'vs');
+        }
+      }, [isDark]);
+
+      useEffect(() => {
+        if (editorRef.current && value !== editorRef.current.getValue() && !editorRef.current.hasTextFocus()) {
+          const position = editorRef.current.getPosition();
+          editorRef.current.setValue(value);
+          if (position) editorRef.current.setPosition(position);
+        }
+      }, [value]);
+
+      return (
+        <div className="w-full relative flex flex-col" style={{ height: `${editorHeight}px` }}>
+          <div ref={editorContainerRef} className={`w-full flex-1 min-h-0 pb-2 ${readOnly ? 'opacity-70' : ''}`} />
+          <div onMouseDown={startResize} className="absolute bottom-0 left-0 right-0 h-2 hover:bg-primary-500 cursor-row-resize z-10 flex justify-center items-center group transition-colors" title="Glisser pour redimensionner">
+            <div className="w-16 h-1 bg-gray-400 dark:bg-[#4d4d4d] rounded-full group-hover:bg-white transition-colors"></div>
+          </div>
+        </div>
+      );
+    };
+
+    // --- CELLULE (Style VS Code pour Python, Simple pour le reste) ---
+    const Cell = ({ cell, isSelected, onSelect, onUpdate, pyodide, isPyodideLoading, isMonacoReady, registerRun, handleSnapshot, isDark }) => {
+      const cellType = cell.type || 'code';
+      const isLocked = cell.locked || false;
+      const isCode = cellType === 'code';
+      
+      const [localCode, setLocalCode] = useState(cell.code || '');
+      const [isFocused, setIsFocused] = useState(false);
+      const [isEditingContent, setIsEditingContent] = useState((cellType === 'markdown' || cellType === 'heading') ? !cell.code : false);
+      const typingTimeoutRef = useRef(null);
+
+      useEffect(() => {
+        if (!isFocused && cell.code !== localCode) setLocalCode(cell.code);
+      }, [cell.code, isFocused]);
+
+      const handleChange = (newValue) => {
+        if (isLocked) return;
+        setLocalCode(newValue);
+        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+        typingTimeoutRef.current = setTimeout(() => onUpdate(cell.id, { code: newValue }), 600);
+      };
+
+      const handleRun = async () => {
+        if (!isCode) {
+          setIsEditingContent(false);
+          if (handleSnapshot) handleSnapshot();
+          onUpdate(cell.id, { code: localCode });
+          return;
+        }
+
+        if (!pyodide || isPyodideLoading) return;
+        
+        if (window.activeP5Instances && window.activeP5Instances[`p5-target-${cell.id}`]) {
+          window.activeP5Instances[`p5-target-${cell.id}`].remove();
+          delete window.activeP5Instances[`p5-target-${cell.id}`];
+        }
+        window.current_p5_target = `p5-target-${cell.id}`;
+        
+        onUpdate(cell.id, { status: 'running', output: '' });
+        
+        let currentOutput = "";
+        pyodide.setStdout({ batched: (msg) => currentOutput += msg + "\n" });
+        pyodide.setStderr({ batched: (msg) => currentOutput += msg + "\n" });
+        
+        try {
+          await pyodide.loadPackagesFromImports(localCode);
+          await pyodide.runPythonAsync(localCode);
+          onUpdate(cell.id, { output: currentOutput || "[Exécuté avec succès]", status: 'idle' });
+        } catch (err) {
+          let errorMsg = err.toString();
+          currentOutput += errorMsg;
+          if (errorMsg.includes("ModuleNotFoundError: No module named")) {
+            const match = errorMsg.match(/No module named '([^']+)'/);
+            if (match) currentOutput += `\n\n💡 ASTUCE :\nSi le module '${match[1]}' existe sur PyPI, utilisez : \nimport micropip\nawait micropip.install('${match[1]}')`;
+          }
+          onUpdate(cell.id, { output: currentOutput, status: 'error' });
+        }
+      };
+
+      useEffect(() => {
+        if (registerRun) registerRun(cell.id, handleRun);
+        return () => { if (registerRun) registerRun(cell.id, null); };
+      }, [handleRun, registerRun]);
+
+      if (isCode) {
+        // --- RENDU STYLE VS CODE (CODE PYTHON) ---
+        return (
+          <div 
+            className={`mt-4 mb-2 flex flex-col rounded-md overflow-hidden border transition-all ${isSelected ? 'border-primary-500 shadow-md ring-1 ring-primary-500/30' : 'border-gray-300 dark:border-[#3c3c3c]'}`}
+            onClick={() => onSelect(cell.id)}
+          >
+            {/* Header façon Onglet VS Code */}
+            <div className="flex items-center justify-between bg-gray-200 dark:bg-[#252526] pr-2 select-none">
+               <div className={`flex items-center gap-2 px-4 py-2 bg-white dark:bg-[#1e1e1e] border-t-2 ${isSelected ? 'border-t-primary-500' : 'border-t-transparent'} text-sm font-mono text-gray-700 dark:text-[#cccccc] cursor-pointer`}>
+                  <Code2 size={14} className="text-primary-500" />
+                  script_{Math.max(1, Math.floor(cell.order / 10))}.py
+                  {isLocked && <Lock size={12} className="text-amber-500/50 ml-2" title="Cellule Verrouillée" />}
+               </div>
+               <div className="flex items-center gap-1">
+                  <button onClick={(e) => { e.stopPropagation(); handleRun(); }} disabled={isPyodideLoading || !pyodide} className="p-1.5 text-gray-600 dark:text-[#cccccc] hover:bg-gray-300 dark:hover:bg-[#333333] hover:text-primary-500 rounded transition-colors disabled:opacity-50" title="Exécuter (Run)">
+                     {cell.status === 'running' ? <Loader2 size={14} className="animate-spin text-amber-500" /> : <Play size={14} />}
+                  </button>
+               </div>
+            </div>
+
+            {/* Éditeur Monaco */}
+            <div className={`bg-white dark:bg-[#1e1e1e] ${isLocked ? 'opacity-90' : ''}`}>
+               {isMonacoReady ? (
+                  <MonacoEditor language="python" value={localCode} onChange={handleChange} onFocus={() => setIsFocused(true)} onBlur={() => setIsFocused(false)} readOnly={isLocked} isDark={isDark} />
+               ) : (
+                  <div className="h-[100px] flex items-center justify-center text-gray-500 dark:text-slate-500">Chargement de l'éditeur...</div>
+               )}
+            </div>
+
+            {/* Terminal Intégré (Sortie) */}
+            <div className="bg-white dark:bg-[#1e1e1e]">
+               <div id={`p5-target-${cell.id}`} className="empty:hidden flex justify-center bg-white w-full overflow-x-auto border-t border-gray-200 dark:border-[#3c3c3c]"></div>
+               
+               {(cell.output || cell.status === 'running') && (
+                  <div className="border-t border-gray-200 dark:border-[#3c3c3c] bg-gray-50 dark:bg-[#181818] p-3">
+                     <div className="flex items-center gap-2 mb-2 text-gray-500 dark:text-[#cccccc] uppercase tracking-wider text-[10px] font-semibold">
+                        {cell.status === 'error' ? <XCircle size={12} className="text-red-500 dark:text-red-400" /> : 
+                         cell.status === 'running' ? <Loader2 size={12} className="animate-spin text-amber-500" /> : 
+                         <Terminal size={12} />}
+                        Terminal
+                        <span className="ml-auto lowercase text-gray-400 dark:text-[#808080] font-mono">
+                           {cell.status === 'running' ? 'exécuté avec python 3' : 'terminé'}
+                        </span>
+                     </div>
+                     <pre className={`font-mono text-xs sm:text-sm overflow-x-auto custom-scrollbar max-h-96 whitespace-pre-wrap ${cell.status === 'error' ? 'text-red-600 dark:text-[#f48771]' : 'text-gray-800 dark:text-[#cccccc]'}`}>
+                         {cell.status === 'running' && !cell.output ? <span className="animate-pulse opacity-50">Exécution en cours...</span> : cell.output}
+                     </pre>
+                  </div>
+               )}
+            </div>
+          </div>
+        );
+      }
+
+      // --- RENDU STANDARD (TEXTE, MARKDOWN, TITRE) ---
+      return (
+        <div 
+          className={`mt-4 mb-2 p-1 rounded-lg border transition-all ${isSelected ? 'border-primary-500 shadow-sm bg-white dark:bg-[#1e1e1e]' : 'border-transparent hover:border-gray-200 dark:hover:border-slate-800'}`}
+          onClick={() => onSelect(cell.id)}
+        >
+          <div className={`relative ${isLocked ? 'bg-gray-50 dark:bg-slate-900/30 rounded' : ''}`}>
+             
+             {isLocked && <Lock size={12} className="absolute top-2 right-2 text-amber-500/50" title="Verrouillé" />}
+
+             {cellType === 'markdown' && !isEditingContent && (
+               <div 
+                 className="p-4 prose dark:prose-invert max-w-none min-h-[40px] cursor-text"
+                 onDoubleClick={() => { if(!isLocked) setIsEditingContent(true); }}
+                 dangerouslySetInnerHTML={{ __html: safeMarked(localCode || '*Double-cliquez ici pour éditer...*') }}
+               />
+             )}
+
+             {cellType === 'heading' && !isEditingContent && (
+               <div 
+                 className="px-4 py-4 cursor-text"
+                 onDoubleClick={() => { if(!isLocked) setIsEditingContent(true); }}
+               >
+                  <h2 className="text-2xl font-bold text-gray-900 dark:text-slate-100">{localCode || 'Titre vide (double-cliquez pour éditer)'}</h2>
+               </div>
+             )}
+
+             {(cellType === 'raw' || isEditingContent) && (
+               isMonacoReady ? (
+                 <div className="border border-gray-200 dark:border-[#3c3c3c] rounded overflow-hidden">
+                   <MonacoEditor language={cellType === 'markdown' || cellType === 'heading' ? 'markdown' : 'plaintext'} value={localCode} onChange={handleChange} onFocus={() => setIsFocused(true)} onBlur={() => setIsFocused(false)} readOnly={isLocked} isDark={isDark} />
+                 </div>
+               ) : (
+                 <div className="h-[100px] flex items-center justify-center text-gray-500 dark:text-slate-500">Chargement...</div>
+               )
+             )}
+          </div>
+        </div>
+      );
+    };
+
+    function App() {
+      const [user, setUser] = useState(null);
+      const [serverData, setServerData] = useState({ users: [], notebooks: [], cells: [] });
+      const [isAuthLoading, setIsAuthLoading] = useState(true);
+      
+      const [currentNbId, setCurrentNbId] = useState(null);
+      const [selectedCellId, setSelectedCellId] = useState(null);
+
+      // Thème
+      const [isDark, setIsDark] = useState(true);
+      const [themeColor, setThemeColor] = useState('indigo');
+      const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+
+      const [authMode, setAuthMode] = useState('login'); 
+      const [inputUsername, setInputUsername] = useState('');
+      const [inputPassword, setInputPassword] = useState('');
+      
+      const [shareUsername, setShareUsername] = useState('');
+      const [joinCode, setJoinCode] = useState('');
+      const [isSharing, setIsSharing] = useState(false);
+      const [isEditingTitle, setIsEditingTitle] = useState(false);
+      const [editTitle, setEditTitle] = useState('');
+      
+      const [isProfileOpen, setIsProfileOpen] = useState(false);
+      const [profileForm, setProfileForm] = useState({ username: '', email: '', description: '', avatarUrl: '', newPassword: '' });
+
+      const [historyPast, setHistoryPast] = useState([]);
+      const [historyFuture, setHistoryFuture] = useState([]);
+
+      const lastSaveTimeRef = useRef(0);
+      const fileInputRef = useRef(null);
+      const fileInputCurrentRef = useRef(null);
+      const cellRunRefs = useRef({});
+
+      const { pyodide, isPyodideLoading } = usePyodide();
+      const isMonacoReady = useMonaco();
+
+      useEffect(() => {
+        let uid = localStorage.getItem('collab_notebook_uid');
+        if (uid) setUser({ uid });
+
+        const savedTheme = localStorage.getItem('collab_theme');
+        if (savedTheme === 'light') setIsDark(false);
+        const savedColor = localStorage.getItem('collab_color');
+        if (savedColor) setThemeColor(savedColor);
+
+        setIsAuthLoading(false);
+      }, []);
+
+      useEffect(() => {
+        document.documentElement.className = isDark ? 'dark' : '';
+        const themeClass = themeColor !== 'indigo' ? `theme-${themeColor}` : '';
+        document.body.className = `bg-gray-50 dark:bg-[#1e1e1e] text-slate-900 dark:text-[#cccccc] m-0 p-0 transition-colors duration-200 ${themeClass}`;
+        
+        localStorage.setItem('collab_theme', isDark ? 'dark' : 'light');
+        localStorage.setItem('collab_color', themeColor);
+      }, [isDark, themeColor]);
+
+      const getThemeHex = (color) => {
+        const colors = { indigo: '#6366f1', emerald: '#10b981', rose: '#f43f5e', amber: '#f59e0b', purple: '#a855f7' };
+        return colors[color] || '#6366f1';
+      };
+
+      // NOUVEAU SYSTÈME TEMPS RÉEL (WebSockets)
+      const socketRef = useRef(null);
+
+      useEffect(() => {
+        // 1. On se connecte au serveur WebSocket
+        socketRef.current = window.io();
+
+        // 2. On récupère les données initiales
+        fetch('/api/data')
+          .then(res => res.json())
+          .then(data => setServerData(data));
+
+        // 3. On écoute les modifications des AUTRES en direct
+        socketRef.current.on('data_updated', (newData) => {
+          setServerData(newData);
+        });
+
+        // Nettoyage à la déconnexion
+        return () => {
+          if (socketRef.current) socketRef.current.disconnect();
+        };
+      }, []);
+
+      // Raccourcis Clavier : Ctrl+Z & Ctrl+Y
+      useEffect(() => {
+        const handleKeyDown = (e) => {
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+             if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return; 
+             e.preventDefault();
+             if (e.shiftKey) document.getElementById('btn-redo')?.click();
+             else document.getElementById('btn-undo')?.click();
+          }
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+             if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
+             e.preventDefault();
+             document.getElementById('btn-redo')?.click();
+          }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+      }, []);
+
+      const updateServer = (mutationFn) => {
+        setServerData(prevData => {
+          const newData = mutationFn(prevData);
+          
+          // On envoie la modification au serveur via WebSocket ⚡️
+          if (socketRef.current) {
+            socketRef.current.emit('update_data', newData);
+          }
+
+          return newData; 
+        });
+      };
+
+      // --- LOGIQUE HISTORIQUE (Undo / Redo) ---
+      const handleSnapshot = () => {
+        if (!currentNbId) return;
+        setServerData(currentData => {
+           const currentNbCells = currentData.cells.filter(c => c.notebookId === currentNbId);
+           const newStateStr = JSON.stringify(currentNbCells);
+           setHistoryPast(p => {
+               if (p.length > 0 && p[p.length - 1] === newStateStr) return p;
+               return [...p, newStateStr].slice(-20);
+           });
+           setHistoryFuture([]);
+           return currentData;
+        });
+      };
+
+      const handleUndo = () => {
+        if (historyPast.length === 0 || !currentNbId) return;
+        setServerData(currentData => {
+           const previousStateStr = historyPast[historyPast.length - 1];
+           const previousCells = JSON.parse(previousStateStr);
+           
+           const currentNbCells = currentData.cells.filter(c => c.notebookId === currentNbId);
+           setHistoryFuture(f => [JSON.stringify(currentNbCells), ...f]);
+           setHistoryPast(p => p.slice(0, -1));
+           
+           const otherCells = currentData.cells.filter(c => c.notebookId !== currentNbId);
+           const newData = { ...currentData, cells: [...otherCells, ...previousCells] };
+           
+           lastSaveTimeRef.current = Date.now();
+           fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newData) });
+           return newData;
+        });
+        setSelectedCellId(null);
+      };
+
+      const handleRedo = () => {
+        if (historyFuture.length === 0 || !currentNbId) return;
+        setServerData(currentData => {
+           const nextStateStr = historyFuture[0];
+           const nextCells = JSON.parse(nextStateStr);
+           
+           const currentNbCells = currentData.cells.filter(c => c.notebookId === currentNbId);
+           setHistoryPast(p => [...p, JSON.stringify(currentNbCells)]);
+           setHistoryFuture(f => f.slice(1));
+           
+           const otherCells = currentData.cells.filter(c => c.notebookId !== currentNbId);
+           const newData = { ...currentData, cells: [...otherCells, ...nextCells] };
+           
+           lastSaveTimeRef.current = Date.now();
+           fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newData) });
+           return newData;
+        });
+        setSelectedCellId(null);
+      };
+
+      // --- Authentification ---
+      const handleAuth = async (e) => {
+        e.preventDefault();
+        const trimmedUsername = inputUsername.trim();
+        if (!trimmedUsername || !inputPassword) return;
+
+        const hashed = await hashPassword(inputPassword);
+
+        if (authMode === 'register') {
+          if (serverData.users.some(u => u.username.toLowerCase() === trimmedUsername.toLowerCase())) { 
+            alert("Ce pseudo est déjà pris !"); return; 
+          }
+          const newUid = generateUUID();
+          updateServer(data => {
+            const newUsers = data.users ? data.users.filter(u => u.id !== newUid) : [];
+            return { ...data, users: [...newUsers, { id: newUid, username: trimmedUsername, password: hashed, email: '', description: '', avatarUrl: '' }] };
+          });
+          localStorage.setItem('collab_notebook_uid', newUid);
+          setUser({ uid: newUid });
+        } else {
+          const existingUser = serverData.users.find(u => u.username.toLowerCase() === trimmedUsername.toLowerCase());
+          if (!existingUser || existingUser.password !== hashed) {
+            alert("Identifiants incorrects !"); return;
+          }
+          localStorage.setItem('collab_notebook_uid', existingUser.id);
+          setUser({ uid: existingUser.id });
+        }
+      };
+
+      const handleLogout = () => {
+        localStorage.removeItem('collab_notebook_uid');
+        setUser(null); setCurrentNbId(null); setSelectedCellId(null);
+        setInputUsername(''); setInputPassword('');
+        setHistoryPast([]); setHistoryFuture([]);
+      };
+
+      const handleSaveProfile = async (e) => {
+        e.preventDefault();
+        const trimmedUsername = profileForm.username.trim();
+        const userData = serverData.users.find(u => u.id === user.uid);
+        if (!userData || !trimmedUsername) return;
+
+        let hashedPw = userData.password;
+        if (profileForm.newPassword) {
+            hashedPw = await hashPassword(profileForm.newPassword);
+        }
+
+        updateServer(data => {
+            if (trimmedUsername !== userData.username && data.users.some(u => u.id !== user.uid && u.username.toLowerCase() === trimmedUsername.toLowerCase())) {
+                alert("Ce pseudo est déjà pris !"); return data; 
+            }
+            const newUsers = data.users.map(u => u.id === user.uid ? {
+                ...u, username: trimmedUsername, password: hashedPw, email: profileForm.email, description: profileForm.description, avatarUrl: profileForm.avatarUrl
+            } : u);
+            let newNotebooks = data.notebooks;
+            if (trimmedUsername !== userData.username) {
+                newNotebooks = newNotebooks.map(nb => {
+                    let updatedNb = { ...nb };
+                    if (nb.ownerUid === user.uid) updatedNb.ownerUsername = trimmedUsername;
+                    if (nb.sharedWith.includes(userData.username)) {
+                        updatedNb.sharedWith = nb.sharedWith.map(name => name === userData.username ? trimmedUsername : name);
+                    }
+                    return updatedNb;
+                });
+            }
+            return { ...data, users: newUsers, notebooks: newNotebooks };
+        });
+        setIsProfileOpen(false);
+      };
+
+      const handleImageUpload = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (event) => setProfileForm(prev => ({...prev, avatarUrl: event.target.result}));
+          reader.readAsDataURL(file);
+        }
+      };
+
+      const handleCreateNotebook = () => {
+        const myData = serverData.users.find(u => u.id === user.uid);
+        if (!user || !myData) return;
+        const newNbId = generateUUID();
+        const title = prompt("Nom du notebook ?") || "Nouveau Notebook";
+        updateServer(data => {
+          const newNb = { id: newNbId, title, ownerUid: user.uid, ownerUsername: myData.username, sharedWith: [], createdAt: new Date().toISOString() };
+          return { ...data, notebooks: [...(data.notebooks || []), newNb] };
+        });
+        setCurrentNbId(newNbId);
+        setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null);
+      };
+
+      const handleJoinByCode = (e) => {
+        e.preventDefault();
+        const code = joinCode.trim().toUpperCase();
+        if (!code) return;
+
+        const templateNb = serverData.notebooks.find(n => n.accessCode === code);
+        if (!templateNb) { alert("Code invalide."); return; }
+
+        const myData = serverData.users.find(u => u.id === user.uid);
+        const newNbId = generateUUID();
+        const templateCells = serverData.cells.filter(c => c.notebookId === templateNb.id);
+        const newCells = templateCells.map(c => ({
+          ...c, id: generateUUID(), notebookId: newNbId, output: '', status: 'idle', locked: false 
+        }));
+
+        updateServer(data => {
+          const newNb = { id: newNbId, title: `Exercice : ${templateNb.title}`, ownerUid: user.uid, ownerUsername: myData.username, sharedWith: [], createdAt: new Date().toISOString() };
+          return { ...data, notebooks: [...(data.notebooks || []), newNb], cells: [...(data.cells || []), ...newCells] };
+        });
+        setCurrentNbId(newNbId); setJoinCode('');
+        setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null);
+      };
+
+      const handleGenerateAccessCode = () => {
+        if (!currentNbId || activeNotebook?.ownerUid !== user.uid) return;
+        let code = activeNotebook.accessCode;
+        if (!code) {
+           code = Math.random().toString(36).substring(2, 8).toUpperCase();
+           updateServer(data => ({ ...data, notebooks: data.notebooks.map(n => n.id === currentNbId ? { ...n, accessCode: code } : n) }));
+        }
+        alert(`Le code de cet exercice est : ${code}\n\nDonnez ce code à vos élèves.`);
+      };
+
+      const processImportedFile = (fileContent, title, targetNbId) => {
+        const ipynb = JSON.parse(fileContent);
+        const importedCells = [];
+        let currentOrder = 10;
+        if (ipynb.cells && Array.isArray(ipynb.cells)) {
+          ipynb.cells.forEach(cell => {
+            let code = Array.isArray(cell.source) ? cell.source.join('') : (cell.source || '');
+            let cellType = 'code';
+            if (cell.cell_type === 'markdown') cellType = 'markdown';
+            else if (cell.cell_type === 'raw') cellType = 'raw';
+            else if (cell.cell_type === 'heading') cellType = 'heading';
+            importedCells.push({ id: generateUUID(), notebookId: targetNbId, code: code, type: cellType, output: '', status: 'idle', order: currentOrder, locked: false });
+            currentOrder += 10;
+          });
+        }
+        if (importedCells.length === 0) importedCells.push({ id: generateUUID(), notebookId: targetNbId, code: '', type: 'code', output: '', status: 'idle', order: 10 });
+        return importedCells;
+      };
+
+      const handleImportNotebook = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const myData = serverData.users.find(u => u.id === user.uid);
+            if (!user || !myData) return;
+            const newNbId = generateUUID();
+            const title = file.name.replace(/\.ipynb$/i, '');
+            const importedCells = processImportedFile(event.target.result, title, newNbId);
+
+            updateServer(data => {
+              const newNb = { id: newNbId, title: title, ownerUid: user.uid, ownerUsername: myData.username, sharedWith: [], createdAt: new Date().toISOString() };
+              return { ...data, notebooks: [...(data.notebooks || []), newNb], cells: [...(data.cells || []), ...importedCells] };
+            });
+            setCurrentNbId(newNbId);
+            setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null);
+          } catch (err) { alert("Erreur d'importation. Fichier invalide."); }
+          e.target.value = null;
+        };
+        reader.readAsText(file);
+      };
+
+      const handleImportIntoCurrentNotebook = (e) => {
+        const file = e.target.files[0];
+        if (!file || !currentNbId) return;
+        if (!window.confirm("Remplacer tout le contenu actuel par le fichier importé ?")) { e.target.value = null; return; }
+        
+        handleSnapshot(); 
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          try {
+            const title = file.name.replace(/\.ipynb$/i, '');
+            const importedCells = processImportedFile(event.target.result, title, currentNbId);
+            updateServer(data => {
+              const filteredCells = data.cells.filter(c => c.notebookId !== currentNbId);
+              const updatedNotebooks = data.notebooks.map(n => n.id === currentNbId ? { ...n, title: title } : n);
+              return { ...data, notebooks: updatedNotebooks, cells: [...filteredCells, ...importedCells] };
+            });
+            setSelectedCellId(null);
+          } catch (err) { alert("Erreur d'importation."); }
+          e.target.value = null;
+        };
+        reader.readAsText(file);
+      };
+
+      const handleRenameNotebook = (newTitle) => {
+        if (!newTitle.trim() || !user || !currentNbId) return setIsEditingTitle(false);
+        const activeNotebook = serverData.notebooks.find(n => n.id === currentNbId);
+        if (activeNotebook?.ownerUid !== user.uid) { alert("Seul le propriétaire peut renommer."); setIsEditingTitle(false); return; }
+        updateServer(data => ({ ...data, notebooks: data.notebooks.map(n => n.id === currentNbId ? { ...n, title: newTitle.trim() } : n) }));
+        setIsEditingTitle(false);
+      };
+
+      const handleDeleteNotebook = (e, nbId) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        if (window.confirm("Êtes-vous sûr de vouloir supprimer définitivement ce notebook ?")) {
+          updateServer(data => ({ 
+            ...data, 
+            notebooks: (data.notebooks || []).filter(n => n.id !== nbId), 
+            cells: (data.cells || []).filter(c => c.notebookId !== nbId) 
+          }));
+          if (currentNbId === nbId) {
+             setCurrentNbId(null); setSelectedCellId(null);
+             setHistoryPast([]); setHistoryFuture([]);
+          }
+        }
+      };
+
+      const handleAddShare = (e) => {
+        e.preventDefault();
+        if (!currentNbId || !shareUsername.trim()) return;
+        const targetUser = serverData.users.find(u => u.username.toLowerCase() === shareUsername.toLowerCase());
+        if (!targetUser) { alert("Utilisateur introuvable !"); return; }
+        
+        updateServer(data => ({
+            ...data, notebooks: data.notebooks.map(n => (n.id === currentNbId && !n.sharedWith.includes(targetUser.username)) ? { ...n, sharedWith: [...n.sharedWith, targetUser.username] } : n)
+        }));
+        setShareUsername('');
+      };
+
+      const handleRemoveShare = (usernameToRemove) => {
+        if (!currentNbId) return;
+        updateServer(data => ({
+            ...data, notebooks: data.notebooks.map(n => n.id === currentNbId ? { ...n, sharedWith: n.sharedWith.filter(u => u !== usernameToRemove) } : n)
+        }));
+      };
+
+      // --- Actions Noyau ---
+      const handleRestartKernel = async () => {
+        if (!pyodide) return;
+        if (window.confirm("Voulez-vous redémarrer l'exécuteur Python ? Toutes les variables en mémoire seront effacées.")) {
+            await pyodide.runPythonAsync(`
+for key in list(globals().keys()):
+    if key not in ['__name__', '__doc__', '__package__', '__loader__', '__spec__', '__annotations__', '__builtins__', 'js', 'pyodide', 'create_proxy']:
+        del globals()[key]
+            `);
+            for (let key in window.activeP5Instances) { window.activeP5Instances[key].remove(); }
+            window.activeP5Instances = {};
+            alert("✅ Noyau redémarré avec succès.");
+        }
+      };
+
+      const handleRunAllCells = async () => {
+        if (!pyodide || isPyodideLoading) return;
+        const activeCells = serverData.cells.filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
+        for (const cell of activeCells) {
+          if (cell.type === 'code' && cellRunRefs.current[cell.id]) {
+            await cellRunRefs.current[cell.id](); 
+          }
+        }
+      };
+
+      const registerCellRun = (id, runFn) => {
+        if (runFn) cellRunRefs.current[id] = runFn;
+        else delete cellRunRefs.current[id];
+      };
+
+      // --- Actions Cellules (Global Toolbar) ---
+      const handleAddCell = () => {
+        if (!user || !currentNbId) return;
+        handleSnapshot();
+        const newCellId = generateUUID();
+        updateServer(data => {
+          const nbCells = (data.cells || []).filter(c => c.notebookId === currentNbId);
+          const newOrder = nbCells.length > 0 ? Math.max(...nbCells.map(c => c.order)) + 10 : 10;
+          const newCell = { id: newCellId, notebookId: currentNbId, code: '', type: 'code', output: '', status: 'idle', order: newOrder, locked: false };
+          return { ...data, cells: [...(data.cells || []), newCell] };
+        });
+        setSelectedCellId(newCellId);
+      };
+
+      const handleMoveCell = (cellId, direction) => {
+        const nbCells = serverData.cells.filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
+        const index = nbCells.findIndex(c => c.id === cellId);
+        if (index === -1) return;
+        
+        let targetCell = null;
+        if (direction === 'up' && index > 0) targetCell = nbCells[index - 1];
+        else if (direction === 'down' && index < nbCells.length - 1) targetCell = nbCells[index + 1];
+        if (!targetCell) return;
+
+        handleSnapshot();
+        updateServer(data => ({
+          ...data, cells: data.cells.map(c => {
+            if (c.id === cellId) return { ...c, order: targetCell.order };
+            if (c.id === targetCell.id) return { ...c, order: nbCells[index].order };
+            return c;
+          })
+        }));
+      };
+
+      const handleDeleteCell = (cellId) => {
+        handleSnapshot();
+        updateServer(data => ({ ...data, cells: data.cells.filter(c => c.id !== cellId) }));
+        if (selectedCellId === cellId) setSelectedCellId(null);
+      };
+
+      const handleUpdateCellType = (cellId, newType) => {
+         handleSnapshot();
+         updateServer(data => ({ ...data, cells: data.cells.map(c => c.id === cellId ? { ...c, type: newType } : c) }));
+      };
+
+      const handleToggleLock = (cellId, currentLockState) => {
+         handleSnapshot();
+         updateServer(data => ({ ...data, cells: data.cells.map(c => c.id === cellId ? { ...c, locked: !currentLockState } : c) }));
+      };
+
+      const handleClearSelectedOutput = (cellId) => {
+         handleSnapshot();
+         if (window.activeP5Instances && window.activeP5Instances[`p5-target-${cellId}`]) {
+            window.activeP5Instances[`p5-target-${cellId}`].remove();
+            delete window.activeP5Instances[`p5-target-${cellId}`];
+         }
+         updateServer(data => ({ ...data, cells: data.cells.map(c => c.id === cellId ? { ...c, output: '', status: 'idle' } : c) }));
+      };
+
+      const handleUpdateCell = (cellId, dataToUpdate) => {
+        updateServer(data => ({ ...data, cells: data.cells.map(c => c.id === cellId ? { ...c, ...dataToUpdate } : c) }));
+      };
+
+      const handleDownload = () => {
+        const activeNotebook = serverData.notebooks.find(n => n.id === currentNbId);
+        const nbCells = serverData.cells.filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
+        const combinedCode = nbCells.map((c, index) => {
+          if (c.type === 'markdown' || c.type === 'heading' || c.type === 'raw') return `# --- TEXT ---\n` + c.code.split('\n').map(line => `# ${line}`).join('\n');
+          return `# --- Cellule ${index + 1} ---\n${c.code}`;
+        }).join('\n\n');
+        
+        const blob = new Blob([combinedCode], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${activeNotebook?.title || 'notebook_export'}.py`;
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+
+      // --- Variables d'affichage ---
+      const userData = user ? serverData.users.find(u => u.id === user.uid) : null;
+      const myNotebooks = serverData.notebooks.filter(n => n.ownerUid === user?.uid);
+      const sharedNotebooks = userData ? serverData.notebooks.filter(n => n.sharedWith.includes(userData.username)) : [];
+      const activeNotebook = serverData.notebooks.find(n => n.id === currentNbId);
+      const activeCells = serverData.cells.filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
+
+      const selectedCell = activeCells.find(c => c.id === selectedCellId);
+      const isSelectedCellFirst = activeCells[0]?.id === selectedCellId;
+      const isSelectedCellLast = activeCells[activeCells.length - 1]?.id === selectedCellId;
+
+      const Avatar = ({ url, name, size=14 }) => url ? <img src={url} alt={name} style={{width: size+10, height: size+10}} className="rounded-full object-cover border border-slate-700" /> : <User size={size} />;
+
+      if (isAuthLoading) return <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-primary-500"><Loader2 className="w-10 h-10 animate-spin mb-4" /><p>Chargement local...</p></div>;
+
+      if (!userData) {
+        return (
+          <div className="min-h-screen flex items-center justify-center p-4 transition-colors">
+            <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-8 rounded-2xl w-full max-w-md shadow-2xl transition-colors">
+              <div className="flex justify-center mb-6"><div className="w-16 h-16 bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 rounded-full flex items-center justify-center"><User size={32} /></div></div>
+              <h2 className="text-2xl font-bold text-center text-gray-900 dark:text-white mb-2">Collab Notebook</h2>
+              <p className="text-gray-500 dark:text-slate-400 text-center mb-8">{authMode === 'login' ? 'Connectez-vous à votre compte' : 'Créez un compte pour commencer à coder'}</p>
+              <form onSubmit={handleAuth} className="space-y-4">
+                <input type="text" required placeholder="Pseudo (ex: AlanTuring)" value={inputUsername} onChange={(e) => setInputUsername(e.target.value)} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-4 py-3 text-gray-900 dark:text-white focus:outline-none focus:border-primary-500 transition-colors" />
+                <input type="password" required placeholder="Mot de passe" value={inputPassword} onChange={(e) => setInputPassword(e.target.value)} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-4 py-3 text-gray-900 dark:text-white focus:outline-none focus:border-primary-500 transition-colors" />
+                <button type="submit" className="w-full bg-primary-600 hover:bg-primary-700 text-white font-medium py-3 rounded-lg transition-colors">
+                  {authMode === 'login' ? 'Se connecter' : "S'inscrire"}
+                </button>
+              </form>
+              <div className="mt-6 text-center">
+                <button onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')} className="text-sm text-primary-500 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
+                  {authMode === 'login' ? "Pas de compte ? S'inscrire" : 'Déjà un compte ? Se connecter'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      if (!currentNbId) {
+        return (
+          <div className="min-h-screen p-4 md:p-8 transition-colors">
+            <div className="max-w-5xl mx-auto">
+              <header className="flex flex-col md:flex-row items-start md:items-center justify-between mb-12 border-b border-gray-200 dark:border-slate-800 pb-6 gap-4">
+                <div className="flex items-center gap-3"><BookOpen size={28} className="text-primary-500" /><h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">Mes Notebooks</h1></div>
+                <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                  <span className="text-gray-600 dark:text-slate-400 bg-white dark:bg-slate-900 px-4 py-2 rounded-full border border-gray-200 dark:border-slate-800 flex items-center gap-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800 shadow-sm transition-colors" onClick={() => { setProfileForm({ username: userData.username, email: userData.email || '', description: userData.description || '', avatarUrl: userData.avatarUrl || '', newPassword: '' }); setIsProfileOpen(true); }} title="Éditer le profil">
+                    <Avatar url={userData.avatarUrl} name={userData.username} /> <strong className="text-gray-900 dark:text-white max-w-[100px] truncate">{userData.username}</strong>
+                  </span>
+                  
+                  <form onSubmit={handleJoinByCode} className="flex gap-2">
+                    <input type="text" placeholder="Code exercice..." value={joinCode} onChange={(e) => setJoinCode(e.target.value)} className="w-28 md:w-36 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors" />
+                    <button type="submit" className="bg-gray-100 dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border border-gray-200 dark:border-slate-700 hover:border-emerald-500 px-3 py-2 rounded-lg text-sm font-medium transition-colors hidden sm:block">Rejoindre</button>
+                    <button type="submit" className="bg-gray-100 dark:bg-slate-800 hover:bg-emerald-50 text-emerald-600 border border-gray-200 dark:border-slate-700 px-3 rounded-lg sm:hidden"><Play size={14}/></button>
+                  </form>
+
+                  <input type="file" accept=".ipynb" className="hidden" ref={fileInputRef} onChange={handleImportNotebook} />
+                  <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center gap-2 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 text-gray-700 dark:text-white px-3 md:px-4 py-2.5 rounded-lg font-medium transition-colors border border-gray-200 dark:border-slate-700 shadow-sm flex-1 md:flex-none"><Upload size={18} /> <span className="hidden md:inline">Importer</span></button>
+                  <button onClick={handleCreateNotebook} className="flex items-center justify-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-3 md:px-5 py-2.5 rounded-lg font-medium transition-colors shadow-md flex-1 md:flex-none"><Plus size={18} /> <span className="hidden md:inline">Nouveau</span></button>
+                  
+                  <div className="relative">
+                     <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"><Settings size={20}/></button>
+                     {isSettingsOpen && (
+                        <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-50">
+                          <h4 className="font-semibold text-gray-900 dark:text-white mb-4 border-b border-gray-100 dark:border-slate-700 pb-2">Paramètres de l'interface</h4>
+                          <div className="flex items-center justify-between mb-4">
+                            <span className="text-sm text-gray-600 dark:text-slate-300">Mode Sombre</span>
+                            <button onClick={() => setIsDark(!isDark)} className={`w-12 h-6 rounded-full flex items-center transition-colors p-1 ${isDark ? 'bg-primary-600 justify-end' : 'bg-gray-300 justify-start'}`}>
+                              <div className="w-4 h-4 rounded-full bg-white flex items-center justify-center">
+                                 {isDark ? <Moon size={10} className="text-primary-600"/> : <Sun size={10} className="text-amber-500"/>}
+                              </div>
+                            </button>
+                          </div>
+                          <div className="mb-2">
+                            <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block">Couleur Principale</span>
+                            <div className="flex gap-2">
+                               {['indigo', 'emerald', 'rose', 'amber', 'purple'].map(color => (
+                                 <button key={color} onClick={() => setThemeColor(color)} className={`w-6 h-6 rounded-full border-2 ${themeColor === color ? 'border-gray-900 dark:border-white scale-110' : 'border-transparent hover:scale-110'} transition-transform`} style={{ backgroundColor: getThemeHex(color) }} title={color} />
+                               ))}
+                            </div>
+                          </div>
+                        </div>
+                     )}
+                  </div>
+
+                  <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Se déconnecter"><LogOut size={20}/></button>
+                </div>
+              </header>
+
+              {/* MODAL DE PROFIL */}
+              {isProfileOpen && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                  <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-md shadow-2xl relative">
+                    <button onClick={() => setIsProfileOpen(false)} className="absolute top-4 right-4 text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-6">Mon Profil</h2>
+                    <form onSubmit={handleSaveProfile} className="space-y-4">
+                      <div>
+                        <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Pseudo</label>
+                        <input type="text" value={profileForm.username} onChange={e => setProfileForm({...profileForm, username: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 outline-none" required />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Nouveau mot de passe (optionnel)</label>
+                        <input type="password" placeholder="Laisser vide pour ne pas changer" value={profileForm.newPassword} onChange={e => setProfileForm({...profileForm, newPassword: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Email (optionnel)</label>
+                        <input type="email" placeholder="email@exemple.com" value={profileForm.email} onChange={e => setProfileForm({...profileForm, email: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 outline-none" />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Photo de profil (optionnel)</label>
+                        <div className="flex items-center gap-3">
+                          {profileForm.avatarUrl ? (
+                            <img src={profileForm.avatarUrl} alt="Avatar" className="w-12 h-12 rounded-full object-cover border border-gray-200 dark:border-slate-700" />
+                          ) : (
+                            <div className="w-12 h-12 rounded-full bg-gray-100 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 flex items-center justify-center text-gray-400"><User size={20}/></div>
+                          )}
+                          <button type="button" onClick={() => document.getElementById('avatar-upload').click()} className="flex items-center gap-2 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-sm text-gray-600 dark:text-slate-300 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 transition-colors">
+                            <ImageIcon size={16} /> Importer
+                          </button>
+                          <input id="avatar-upload" type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Description (optionnel)</label>
+                        <textarea placeholder="Écrivez votre bio ici" value={profileForm.description} onChange={e => setProfileForm({...profileForm, description: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 outline-none h-20 resize-none"></textarea>
+                      </div>
+                      <button type="submit" className="w-full bg-primary-600 hover:bg-primary-700 text-white font-medium py-2.5 rounded-lg transition-colors mt-2">Enregistrer</button>
+                    </form>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-10">
+                <section>
+                  <h2 className="text-xl font-semibold mb-4 flex items-center gap-2"><Lock size={18} /> Créés par moi</h2>
+                  {myNotebooks.length === 0 ? <p className="text-gray-500 italic bg-white dark:bg-slate-900/50 p-6 rounded-xl border border-gray-200 dark:border-slate-800 border-dashed">Aucun notebook créé.</p> : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {myNotebooks.map(nb => (
+                        <div key={nb.id} onClick={() => { setCurrentNbId(nb.id); setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null); }} className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 shadow-sm group relative">
+                          <button onClick={(e) => handleDeleteNotebook(e, nb.id)} className="absolute top-4 right-4 p-1.5 text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-slate-800 rounded transition-all opacity-0 group-hover:opacity-100" title="Supprimer ce notebook"><Trash2 size={16} /></button>
+                          <h3 className="text-lg font-medium mb-2 pr-6 truncate">{nb.title}</h3>
+                          <p className="text-sm text-gray-500 dark:text-slate-500 truncate">Partagé avec: {nb.sharedWith.length === 0 ? 'Personne' : nb.sharedWith.join(', ')}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </section>
+                <section>
+                  <h2 className="text-xl font-semibold mb-4 flex items-center gap-2"><Users size={18} /> Partagés avec moi</h2>
+                  {sharedNotebooks.length === 0 ? <p className="text-gray-500 italic bg-white dark:bg-slate-900/50 p-6 rounded-xl border border-gray-200 dark:border-slate-800 border-dashed">Personne n'a encore partagé de notebook avec vous.</p> : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {sharedNotebooks.map(nb => {
+                         const owner = serverData.users.find(u => u.id === nb.ownerUid);
+                         return (
+                          <div key={nb.id} onClick={() => { setCurrentNbId(nb.id); setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null); }} className="bg-white dark:bg-slate-900 border border-primary-100 dark:border-primary-900/50 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 relative overflow-hidden shadow-sm flex flex-col justify-between">
+                            <div className="absolute top-0 left-0 w-1 h-full bg-primary-500"></div>
+                            <h3 className="text-lg font-medium mb-4 truncate">{nb.title}</h3>
+                            <div className="flex items-center gap-2">
+                               <Avatar url={owner?.avatarUrl} name={nb.ownerUsername} size={18} />
+                               <span className="text-sm text-primary-600 dark:text-primary-400 truncate">{nb.ownerUsername}</span>
+                            </div>
+                          </div>
+                         )
+                      })}
+                    </div>
+                  )}
+                </section>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen transition-colors flex flex-col">
+          
+          {/* MODAL DE PARTAGE */}
+          {isSharing && activeNotebook && (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+              <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-md shadow-2xl relative">
+                <button onClick={() => setIsSharing(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Gérer les accès</h2>
+                <p className="text-sm text-gray-500 dark:text-slate-400 mb-6">Invitez des collaborateurs sur le notebook <strong className="text-gray-900 dark:text-white">{activeNotebook.title}</strong>.</p>
+                
+                <form onSubmit={handleAddShare} className="flex gap-2 mb-6">
+                  <input type="text" placeholder="Entrer le pseudo exact..." value={shareUsername} onChange={(e) => setShareUsername(e.target.value)} className="flex-1 bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2.5 text-sm text-gray-900 dark:text-white focus:outline-none focus:border-primary-500" />
+                  <button type="submit" className="bg-primary-600 hover:bg-primary-700 px-4 rounded-lg text-white text-sm font-medium transition-colors">Ajouter</button>
+                </form>
+                
+                {activeNotebook.sharedWith.length > 0 ? (
+                  <div>
+                    <span className="text-xs text-gray-400 dark:text-slate-400 font-semibold mb-3 block uppercase tracking-wider">Partagé avec :</span>
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
+                      {activeNotebook.sharedWith.map(u => (
+                        <div key={u} className="flex justify-between items-center bg-gray-50 dark:bg-slate-800 px-3 py-2.5 rounded-lg border border-gray-200 dark:border-slate-700">
+                          <div className="flex items-center gap-2">
+                            <User size={16} className="text-primary-500" />
+                            <span className="text-sm text-gray-700 dark:text-slate-200 font-medium">{u}</span>
+                          </div>
+                          <button onClick={() => handleRemoveShare(u)} className="text-gray-400 hover:text-red-500 transition-colors p-1 hover:bg-gray-200 dark:hover:bg-slate-700 rounded"><X size={16}/></button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center p-4 bg-gray-50 dark:bg-slate-800/50 rounded-lg border border-gray-200 dark:border-slate-700 border-dashed">
+                    <p className="text-sm text-gray-500">Ce notebook n'est partagé avec personne pour le moment.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ZONE DE NAVIGATION TOP ET BARRE GLOBALE - Sticky */}
+          <div className="sticky top-0 z-20 flex flex-col shadow-md">
+            
+            {/* Barre principale */}
+            <nav className="bg-white dark:bg-[#161b22] border-b border-gray-200 dark:border-slate-700/50 px-2 sm:px-4 py-2 flex flex-wrap gap-2 items-center justify-between">
+              <div className="flex items-center gap-2 sm:gap-4 min-w-0">
+                <button onClick={() => {setCurrentNbId(null); setSelectedCellId(null);}} className="p-1 sm:p-2 flex-shrink-0 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors"><ArrowLeft size={20} /></button>
+                
+                <div className="flex items-center min-w-0">
+                  {isEditingTitle ? (
+                    <input autoFocus type="text" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleRenameNotebook(editTitle); }} onBlur={() => handleRenameNotebook(editTitle)} className="bg-gray-50 dark:bg-slate-900 border border-primary-500 text-gray-900 dark:text-slate-100 font-bold px-2 py-1 rounded outline-none w-32 sm:w-auto" />
+                  ) : (
+                    <div className={`flex items-center gap-2 group min-w-0 ${activeNotebook?.ownerUid === user?.uid ? 'cursor-pointer' : ''}`} onClick={() => { if (activeNotebook?.ownerUid === user?.uid) { setEditTitle(activeNotebook.title); setIsEditingTitle(true); } }}>
+                      <h1 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 truncate max-w-[150px] sm:max-w-[300px]">{activeNotebook?.title || "Chargement..."}</h1>
+                      {activeNotebook?.ownerUid === user?.uid && <Edit2 size={14} className="text-gray-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />}
+                    </div>
+                  )}
+                </div>
+                
+                {/* HISTORIQUE UNDO / REDO */}
+                <div className="flex items-center border-l border-gray-200 dark:border-slate-700 ml-2 pl-2">
+                  <button id="btn-undo" onClick={handleUndo} disabled={historyPast.length === 0} className="p-1 sm:p-1.5 text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent rounded transition-colors" title="Annuler l'action globale (Ctrl+Z)"><RotateCcw size={16} /></button>
+                  <button id="btn-redo" onClick={handleRedo} disabled={historyFuture.length === 0} className="p-1 sm:p-1.5 text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent rounded transition-colors" title="Rétablir l'action globale (Ctrl+Y)"><RotateCw size={16} /></button>
+                </div>
+              </div>
+              
+              <div className="flex items-center gap-2 sm:gap-4 overflow-x-auto no-scrollbar pb-1 sm:pb-0 w-full sm:w-auto">
+                
+                <div className="flex flex-shrink-0 items-center gap-1 border-r border-gray-200 dark:border-slate-700 pr-2 sm:pr-4 mr-1 sm:mr-2">
+                   <button onClick={handleRestartKernel} className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-slate-300 hover:text-red-500 transition-colors px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800" title="Redémarrer le noyau">
+                      <Terminal size={14} /> <span className="hidden lg:inline">Noyau</span>
+                   </button>
+                   <button onClick={handleRunAllCells} className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-slate-300 hover:text-primary-500 transition-colors px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800" title="Exécuter toutes les cellules de code">
+                      <Play size={14} /> <span className="hidden lg:inline">Tout exécuter</span>
+                   </button>
+                </div>
+
+                <div className="flex flex-shrink-0 items-center gap-2 bg-gray-100 dark:bg-slate-800/50 px-2 sm:px-3 py-1.5 rounded-full border border-gray-200 dark:border-slate-700/50 text-sm">
+                  {isPyodideLoading ? <><Loader2 size={14} className="animate-spin text-amber-500" /><span className="text-amber-600 dark:text-amber-400/90 hidden sm:inline">Chargement...</span></> : pyodide ? <><CheckCircle2 size={14} className="text-emerald-500" /><span className="text-emerald-600 dark:text-emerald-400/90 hidden sm:inline">Python Prêt</span></> : <><span className="text-red-500 hidden sm:inline">Erreur Python</span></>}
+                </div>
+
+                {activeNotebook?.accessCode && (
+                  <span className="flex-shrink-0 text-xs font-mono bg-emerald-50 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 px-3 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-800/50" title="Code de cet exercice">
+                    Code: {activeNotebook.accessCode}
+                  </span>
+                )}
+
+                <div className="flex flex-shrink-0 gap-1 sm:gap-2 relative items-center">
+                  
+                  {activeNotebook?.ownerUid === user?.uid && (
+                     <>
+                       <input type="file" accept=".ipynb" className="hidden" ref={fileInputCurrentRef} onChange={handleImportIntoCurrentNotebook} />
+                       <button onClick={() => fileInputCurrentRef.current?.click()} className="flex items-center gap-2 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-600 px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors text-gray-700 dark:text-white" title="Remplacer le contenu par un fichier Jupyter"><Upload size={16} /></button>
+                     </>
+                  )}
+
+                  <button onClick={handleDownload} className="flex items-center gap-2 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors" title="Exporter en .py"><Download size={16} /> <span className="hidden md:inline">Exporter</span></button>
+                  {activeNotebook?.ownerUid === user?.uid && (
+                    <>
+                      <button onClick={handleGenerateAccessCode} className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors" title="Créer un code pour distribuer ce notebook"><Key size={16} /> <span className="hidden md:inline">Code Élève</span></button>
+                      <button onClick={() => setIsSharing(true)} className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors" title="Partager pour collaborer en direct"><Share2 size={16} /> <span className="hidden md:inline">Partager</span></button>
+                    </>
+                  )}
+
+                  <div className="relative border-l border-gray-200 dark:border-slate-700 pl-2 ml-2">
+                     <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"><Settings size={20}/></button>
+                     {isSettingsOpen && (
+                       <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-50">
+                         <h4 className="font-semibold text-gray-900 dark:text-white mb-4 border-b border-gray-100 dark:border-slate-700 pb-2">Paramètres de l'interface</h4>
+                         <div className="flex items-center justify-between mb-4">
+                           <span className="text-sm text-gray-600 dark:text-slate-300">Mode Sombre</span>
+                           <button onClick={() => setIsDark(!isDark)} className={`w-12 h-6 rounded-full flex items-center transition-colors p-1 ${isDark ? 'bg-primary-600 justify-end' : 'bg-gray-300 justify-start'}`}>
+                             <div className="w-4 h-4 rounded-full bg-white flex items-center justify-center">
+                                {isDark ? <Moon size={10} className="text-primary-600"/> : <Sun size={10} className="text-amber-500"/>}
+                             </div>
+                           </button>
+                         </div>
+                         <div className="mb-2">
+                           <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block">Couleur Principale</span>
+                           <div className="flex gap-2">
+                              {['indigo', 'emerald', 'rose', 'amber', 'purple'].map(color => (
+                                <button key={color} onClick={() => setThemeColor(color)} className={`w-6 h-6 rounded-full border-2 ${themeColor === color ? 'border-gray-900 dark:border-white scale-110' : 'border-transparent hover:scale-110'} transition-transform`} style={{ backgroundColor: getThemeHex(color) }} title={color} />
+                              ))}
+                           </div>
+                         </div>
+                       </div>
+                     )}
+                  </div>
+
+                </div>
+              </div>
+            </nav>
+
+            {/* Barre secondaire GLOBALE : Actions sur la cellule sélectionnée */}
+            {selectedCell ? (
+               <div className="bg-gray-100 dark:bg-[#1e1e1e] border-b border-gray-200 dark:border-slate-800 px-2 sm:px-4 py-2 flex items-center gap-2 overflow-x-auto no-scrollbar shadow-inner">
+                 <span className="text-[10px] font-bold text-primary-500 whitespace-nowrap hidden sm:block tracking-widest uppercase">Édition</span>
+                 <div className="w-px h-4 bg-gray-300 dark:bg-slate-700 hidden sm:block mx-2"></div>
+                 
+                 <select
+                    value={selectedCell.type || 'code'}
+                    disabled={selectedCell.locked}
+                    onChange={(e) => handleUpdateCellType(selectedCell.id, e.target.value)}
+                    className="flex-shrink-0 bg-white dark:bg-[#2d2d2d] border border-gray-300 dark:border-slate-700 text-xs sm:text-sm text-gray-700 dark:text-slate-200 rounded px-2 py-1 outline-none focus:border-primary-500 disabled:opacity-50 cursor-pointer"
+                 >
+                    <option value="code">Code Python</option>
+                    <option value="markdown">Markdown</option>
+                    <option value="raw">Texte brut</option>
+                    <option value="heading">Titre</option>
+                 </select>
+
+                 <div className="flex flex-shrink-0 items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 ml-2">
+                   <button onClick={() => handleMoveCell(selectedCell.id, 'up')} disabled={isSelectedCellFirst || selectedCell.locked} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-l hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Monter"><ArrowUp size={14} /></button>
+                   <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
+                   <button onClick={() => handleMoveCell(selectedCell.id, 'down')} disabled={isSelectedCellLast || selectedCell.locked} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Descendre"><ArrowDown size={14} /></button>
+                 </div>
+
+                 <div className="flex flex-shrink-0 items-center gap-2 ml-auto">
+                   {activeNotebook?.ownerUid === user?.uid && (
+                     <button onClick={() => handleToggleLock(selectedCell.id, selectedCell.locked)} className={`flex items-center gap-1.5 px-2 py-1.5 rounded transition-colors text-xs font-medium ${selectedCell.locked ? 'text-amber-600 bg-amber-100 dark:text-amber-400 dark:bg-amber-900/30' : 'text-gray-600 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-[#3c3c3c]'}`} title={selectedCell.locked ? "Déverrouiller" : "Verrouiller"}>
+                       {selectedCell.locked ? <Lock size={14} /> : <Unlock size={14} />} <span className="hidden sm:inline">{selectedCell.locked ? 'Verrouillé' : 'Libre'}</span>
+                     </button>
+                   )}
+                   {selectedCell.type === 'code' && (
+                      <button onClick={() => handleClearSelectedOutput(selectedCell.id)} disabled={!selectedCell.output && selectedCell.status !== 'error'} className="flex items-center gap-1.5 px-2 py-1.5 text-gray-600 dark:text-slate-300 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-[#3c3c3c] disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Effacer la console">
+                         <XCircle size={14} /> <span className="hidden sm:inline">Effacer console</span>
+                      </button>
+                   )}
+                   <button onClick={() => handleDeleteCell(selectedCell.id)} disabled={selectedCell.locked && activeNotebook?.ownerUid !== user?.uid} className="flex items-center gap-1.5 px-2 py-1.5 text-red-600 bg-red-50 border border-red-200 dark:text-red-400 dark:bg-red-950/30 dark:border-red-900/50 hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Supprimer la cellule">
+                      <Trash2 size={14} /> <span className="hidden sm:inline">Supprimer</span>
+                   </button>
+                 </div>
+               </div>
+            ) : (
+               <div className="bg-gray-100 dark:bg-[#1e1e1e] border-b border-gray-200 dark:border-slate-800 px-4 py-2 min-h-[44px] flex items-center justify-center">
+                 <span className="text-xs text-gray-500 dark:text-slate-500 italic">Sélectionnez une cellule pour modifier son type ou la supprimer</span>
+               </div>
+            )}
+          </div>
+          
+          <main className="max-w-5xl mx-auto py-4 sm:py-8 px-2 sm:px-4 flex-1 w-full">
+            {activeCells.length === 0 ? (
+              <div className="text-center py-20 bg-white dark:bg-[#161b22] rounded-xl border border-dashed border-gray-300 dark:border-slate-700 shadow-sm mx-2">
+                <Code2 size={48} className="mx-auto text-gray-400 dark:text-slate-600 mb-4" />
+                <h2 className="text-xl font-medium text-gray-700 dark:text-slate-300 mb-4">Notebook vide</h2>
+                <button onClick={handleAddCell} className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors shadow-sm"><Plus size={18} /> Créer la première cellule</button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {activeCells.map((cell) => (
+                  <Cell 
+                    key={cell.id} 
+                    cell={cell} 
+                    isSelected={selectedCellId === cell.id}
+                    onSelect={setSelectedCellId}
+                    onUpdate={handleUpdateCell} 
+                    pyodide={pyodide} 
+                    isPyodideLoading={isPyodideLoading} 
+                    isMonacoReady={isMonacoReady} 
+                    registerRun={registerCellRun}
+                    handleSnapshot={handleSnapshot}
+                    isDark={isDark}
+                  />
+                ))}
+                <div className="flex justify-center pt-6 pb-12"><button onClick={handleAddCell} className="flex items-center gap-2 px-6 py-2 bg-white dark:bg-[#252526] hover:bg-gray-50 dark:hover:bg-[#2d2d2d] border border-gray-200 dark:border-[#3c3c3c] text-gray-700 dark:text-[#cccccc] font-medium rounded transition-colors shadow-sm"><Plus size={16} /> Nouvelle cellule</button></div>
+              </div>
+            )}
+          </main>
+        </div>
+      );
+    }
+
+    const root = createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
