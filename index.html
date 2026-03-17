@@ -55,7 +55,6 @@
     .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); }
   </style>
   
-  <!-- CORRECTION : type="importmap" indispensable pour React -->
   <script type="importmap">
     {
       "imports": {
@@ -79,7 +78,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useRef } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Play, Plus, Trash2, Loader2, Users, Terminal, Code2, CheckCircle2, ArrowLeft, Share2, BookOpen, User, Lock, Edit2, Download, ArrowUp, ArrowDown, XCircle, Upload, LogOut, Key, Unlock, X, RotateCcw, RotateCw, Image as ImageIcon, Settings, Moon, Sun, Type, RefreshCw } from 'lucide-react';
+    import { Play, Plus, Trash2, Loader2, Users, Terminal, Code2, CheckCircle2, ArrowLeft, Share2, BookOpen, User, Lock, Edit2, Download, ArrowUp, ArrowDown, XCircle, Upload, LogOut, Key, Unlock, X, RotateCcw, RotateCw, Image as ImageIcon, Settings, Moon, Sun, Type, RefreshCw, Copy, Scissors, ClipboardPaste } from 'lucide-react';
     import { marked } from 'marked';
 
     const generateUUID = () => {
@@ -324,25 +323,15 @@ def run():
       return isReady;
     };
 
-    const MonacoEditor = ({ value, onChange, onFocus, onBlur, language = 'python', readOnly = false, isDark }) => {
+    const MonacoEditor = ({ value, onChange, onFocus, onBlur, language = 'python', readOnly = false, isDark, onRun }) => {
       const editorContainerRef = useRef(null);
       const editorRef = useRef(null);
-      const [editorHeight, setEditorHeight] = useState(200);
+      const [editorHeight, setEditorHeight] = useState(40);
+      const onRunRef = useRef(onRun);
 
-      const startResize = (e) => {
-        e.preventDefault();
-        const startY = e.clientY;
-        const startHeight = editorHeight;
-        const onMouseMove = (moveEvent) => setEditorHeight(Math.max(80, startHeight + (moveEvent.clientY - startY)));
-        const onMouseUp = () => {
-          document.removeEventListener('mousemove', onMouseMove);
-          document.removeEventListener('mouseup', onMouseUp);
-          document.body.style.cursor = 'default';
-        };
-        document.body.style.cursor = 'row-resize';
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
-      };
+      useEffect(() => {
+        onRunRef.current = onRun;
+      }, [onRun]);
 
       useEffect(() => {
         if (editorContainerRef.current && !editorRef.current && window.monaco) {
@@ -357,11 +346,39 @@ def run():
             fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
             padding: { top: 12, bottom: 12 },
             readOnly: readOnly,
-            renderLineHighlight: 'none'
+            renderLineHighlight: 'none',
+            overviewRulerLanes: 0,
+            hideCursorInOverviewRuler: true,
+            scrollbar: { vertical: 'hidden', horizontal: 'auto' }, // Cache scrollbar pour l'auto-resize
+            wordWrap: 'on'
           });
-          editorRef.current.onDidChangeModelContent(() => onChange(editorRef.current.getValue()));
+
+          editorRef.current.onDidChangeModelContent(() => {
+            onChange(editorRef.current.getValue());
+            updateHeight();
+          });
           editorRef.current.onDidFocusEditorText(onFocus);
           editorRef.current.onDidBlurEditorText(onBlur);
+
+          // Auto-resize magic
+          const updateHeight = () => {
+            if (editorRef.current) {
+              const contentHeight = Math.min(1000, Math.max(40, editorRef.current.getContentHeight()));
+              setEditorHeight(contentHeight);
+              editorRef.current.layout();
+            }
+          };
+
+          editorRef.current.onDidContentSizeChange(updateHeight);
+          setTimeout(updateHeight, 100);
+
+          // Raccourcis d'exécution (Maj+Enter et Ctrl+Enter)
+          editorRef.current.addCommand(window.monaco.KeyMod.Shift | window.monaco.KeyCode.Enter, () => {
+            if (onRunRef.current) onRunRef.current();
+          });
+          editorRef.current.addCommand(window.monaco.KeyMod.CtrlCmd | window.monaco.KeyCode.Enter, () => {
+            if (onRunRef.current) onRunRef.current();
+          });
         }
         return () => {
           if (editorRef.current) {
@@ -398,11 +415,8 @@ def run():
       }, [value]);
 
       return (
-        <div className="w-full relative flex flex-col" style={{ height: `${editorHeight}px` }}>
-          <div ref={editorContainerRef} className={`w-full flex-1 min-h-0 pb-2 ${readOnly ? 'opacity-70' : ''}`} />
-          <div onMouseDown={startResize} className="absolute bottom-0 left-0 right-0 h-2 hover:bg-primary-500 cursor-row-resize z-10 flex justify-center items-center group transition-colors" title="Glisser pour redimensionner">
-            <div className="w-16 h-1 bg-gray-400 dark:bg-[#4d4d4d] rounded-full group-hover:bg-white transition-colors"></div>
-          </div>
+        <div className="w-full relative flex flex-col transition-all duration-100" style={{ height: `${editorHeight}px` }}>
+          <div ref={editorContainerRef} className={`w-full flex-1 min-h-0 ${readOnly ? 'opacity-70' : ''}`} />
         </div>
       );
     };
@@ -471,70 +485,29 @@ def run():
         return () => { if (registerRun) registerRun(cell.id, null); };
       }, [handleRun, registerRun]);
 
-      if (isCode) {
-        // --- RENDU STYLE VS CODE (CODE PYTHON) ---
-        return (
-          <div 
-            className={`mt-4 mb-2 flex flex-col rounded-md overflow-hidden border transition-all ${isSelected ? 'border-primary-500 shadow-md ring-1 ring-primary-500/30' : 'border-gray-300 dark:border-[#3c3c3c]'}`}
-            onClick={() => onSelect(cell.id)}
-          >
-            {/* Header façon Onglet VS Code */}
-            <div className="flex items-center justify-between bg-gray-200 dark:bg-[#252526] pr-2 select-none">
-               <div className={`flex items-center gap-2 px-4 py-2 bg-white dark:bg-[#1e1e1e] border-t-2 ${isSelected ? 'border-t-primary-500' : 'border-t-transparent'} text-sm font-mono text-gray-700 dark:text-[#cccccc] cursor-pointer`}>
-                  <Code2 size={14} className="text-primary-500" />
-                  script_{Math.max(1, Math.floor(cell.order / 10))}.py
-                  {isLocked && <Lock size={12} className="text-amber-500/50 ml-2" title="Cellule Verrouillée" />}
-               </div>
-               <div className="flex items-center gap-1">
-                  <button onClick={(e) => { e.stopPropagation(); handleRun(); }} disabled={isPyodideLoading || !pyodide} className="p-1.5 text-gray-600 dark:text-[#cccccc] hover:bg-gray-300 dark:hover:bg-[#333333] hover:text-primary-500 rounded transition-colors disabled:opacity-50" title="Exécuter (Run)">
-                     {cell.status === 'running' ? <Loader2 size={14} className="animate-spin text-amber-500" /> : <Play size={14} />}
-                  </button>
-               </div>
-            </div>
-
-            {/* Éditeur Monaco */}
-            <div className={`bg-white dark:bg-[#1e1e1e] ${isLocked ? 'opacity-90' : ''}`}>
-               {isMonacoReady ? (
-                  <MonacoEditor language="python" value={localCode} onChange={handleChange} onFocus={() => setIsFocused(true)} onBlur={() => setIsFocused(false)} readOnly={isLocked} isDark={isDark} />
-               ) : (
-                  <div className="h-[100px] flex items-center justify-center text-gray-500 dark:text-slate-500">Chargement de l'éditeur...</div>
-               )}
-            </div>
-
-            {/* Terminal Intégré (Sortie) */}
-            <div className="bg-white dark:bg-[#1e1e1e]">
-               <div id={`p5-target-${cell.id}`} className="empty:hidden flex justify-center bg-white w-full overflow-x-auto border-t border-gray-200 dark:border-[#3c3c3c]"></div>
-               
-               {(cell.output || cell.status === 'running') && (
-                  <div className="border-t border-gray-200 dark:border-[#3c3c3c] bg-gray-50 dark:bg-[#181818] p-3">
-                     <div className="flex items-center gap-2 mb-2 text-gray-500 dark:text-[#cccccc] uppercase tracking-wider text-[10px] font-semibold">
-                        {cell.status === 'error' ? <XCircle size={12} className="text-red-500 dark:text-[#f48771]" /> : 
-                         cell.status === 'running' ? <Loader2 size={12} className="animate-spin text-amber-500" /> : 
-                         <Terminal size={12} />}
-                        Terminal
-                        <span className="ml-auto lowercase text-gray-400 dark:text-[#808080] font-mono">
-                           {cell.status === 'running' ? 'exécuté avec python 3' : 'terminé'}
-                        </span>
-                     </div>
-                     <pre className={`font-mono text-xs sm:text-sm overflow-x-auto custom-scrollbar max-h-96 whitespace-pre-wrap ${cell.status === 'error' ? 'text-red-600 dark:text-[#f48771]' : 'text-gray-800 dark:text-[#cccccc]'}`}>
-                         {cell.status === 'running' && !cell.output ? <span className="animate-pulse opacity-50">Exécution en cours...</span> : cell.output}
-                     </pre>
-                  </div>
-               )}
-            </div>
-          </div>
-        );
-      }
-
-      // --- RENDU STANDARD (TEXTE, MARKDOWN, TITRE) ---
       return (
         <div 
-          className={`mt-4 mb-2 p-1 rounded-lg border transition-all ${isSelected ? 'border-primary-500 shadow-sm bg-white dark:bg-[#1e1e1e]' : 'border-transparent hover:border-gray-200 dark:hover:border-slate-800'}`}
+          className={`mt-4 mb-2 flex flex-col rounded-md overflow-hidden border transition-all ${isSelected ? 'border-primary-500 ring-1 ring-primary-500/30 shadow-md' : 'border-gray-200 dark:border-[#3c3c3c]'}`}
           onClick={() => onSelect(cell.id)}
         >
-          <div className={`relative ${isLocked ? 'bg-gray-50 dark:bg-slate-900/30 rounded' : ''}`}>
+          {isCode && (
+             <div className="bg-gray-100 dark:bg-[#252526] px-3 py-1.5 flex items-center justify-between border-b border-gray-200 dark:border-[#3c3c3c] select-none">
+                <div className="flex items-center">
+                  <Code2 size={14} className="text-primary-500 mr-2" />
+                  <span className="text-xs font-mono text-gray-600 dark:text-[#cccccc]">script_{Math.max(1, Math.floor(cell.order / 10))}.py</span>
+                  {isLocked && <Lock size={12} className="text-amber-500/50 ml-2" title="Cellule Verrouillée" />}
+                </div>
+             </div>
+          )}
+
+          <div className={`relative ${isLocked ? 'opacity-90 bg-gray-50 dark:bg-[#1e1e1e]' : 'bg-white dark:bg-[#1e1e1e]'}`}>
              
-             {isLocked && <Lock size={12} className="absolute top-2 right-2 text-amber-500/50" title="Verrouillé" />}
+             {!isCode && (
+               <div className="absolute top-2 right-4 text-[10px] uppercase font-bold tracking-wider text-gray-400 dark:text-slate-600 pointer-events-none z-10 select-none hidden sm:block">
+                  {cellType === 'markdown' ? 'Markdown' : cellType === 'heading' ? 'Titre' : 'Texte brut'}
+               </div>
+             )}
+             {!isCode && isLocked && <Lock size={12} className="absolute top-2 right-2 text-amber-500/50" title="Verrouillé" />}
 
              {cellType === 'markdown' && !isEditingContent && (
                <div 
@@ -546,23 +519,44 @@ def run():
 
              {cellType === 'heading' && !isEditingContent && (
                <div 
-                 className="px-4 py-4 cursor-text"
+                 className="px-4 py-4 cursor-text border-b border-transparent"
                  onDoubleClick={() => { if(!isLocked) setIsEditingContent(true); }}
                >
                   <h2 className="text-2xl font-bold text-gray-900 dark:text-slate-100">{localCode || 'Titre vide (double-cliquez pour éditer)'}</h2>
                </div>
              )}
 
-             {(cellType === 'raw' || isEditingContent) && (
+             {(isCode || cellType === 'raw' || isEditingContent) && (
                isMonacoReady ? (
-                 <div className="border border-gray-200 dark:border-[#3c3c3c] rounded overflow-hidden">
-                   <MonacoEditor language={cellType === 'markdown' || cellType === 'heading' ? 'markdown' : 'plaintext'} value={localCode} onChange={handleChange} onFocus={() => setIsFocused(true)} onBlur={() => setIsFocused(false)} readOnly={isLocked} isDark={isDark} />
-                 </div>
+                 <MonacoEditor 
+                   language={isCode ? 'python' : (cellType === 'markdown' || cellType === 'heading' ? 'markdown' : 'plaintext')} 
+                   value={localCode} 
+                   onChange={handleChange} 
+                   onFocus={() => setIsFocused(true)} 
+                   onBlur={() => setIsFocused(false)}
+                   readOnly={isLocked}
+                   isDark={isDark}
+                   onRun={handleRun}
+                 />
                ) : (
-                 <div className="h-[100px] flex items-center justify-center text-gray-500 dark:text-slate-500">Chargement...</div>
+                 <div className="h-[100px] flex items-center justify-center text-gray-500 dark:text-slate-500">Chargement de l'éditeur...</div>
                )
              )}
           </div>
+          
+          {isCode && (
+            <div className="bg-white dark:bg-[#1e1e1e]">
+               <div id={`p5-target-${cell.id}`} className="empty:hidden flex justify-center bg-white w-full overflow-x-auto border-t border-gray-200 dark:border-[#3c3c3c]"></div>
+               
+               {(cell.output || cell.status === 'running') && (
+                  <div className="border-t border-gray-200 dark:border-[#3c3c3c] bg-gray-50 dark:bg-[#181818] p-3">
+                     <pre className={`font-mono text-xs sm:text-sm overflow-x-auto custom-scrollbar max-h-96 whitespace-pre-wrap ${cell.status === 'error' ? 'text-red-600 dark:text-[#f48771]' : 'text-gray-800 dark:text-[#cccccc]'}`}>
+                         {cell.status === 'running' && !cell.output ? <span className="animate-pulse opacity-50">Exécution en cours...</span> : cell.output}
+                     </pre>
+                  </div>
+               )}
+            </div>
+          )}
         </div>
       );
     };
@@ -574,6 +568,7 @@ def run():
       
       const [currentNbId, setCurrentNbId] = useState(null);
       const [selectedCellId, setSelectedCellId] = useState(null);
+      const [clipboardCell, setClipboardCell] = useState(null);
 
       // Thème
       const [isDark, setIsDark] = useState(true);
@@ -631,14 +626,12 @@ def run():
 
       // --- NOUVEAU SYSTÈME TEMPS RÉEL (WebSockets + MongoDB) ---
       useEffect(() => {
-        // Sécurité : vérifier si io() est bien défini pour éviter l'erreur (window.io is not a function)
         if (typeof window.io !== 'undefined') {
           socketRef.current = window.io();
         } else {
           console.warn("⚠️ Socket.io n'a pas pu être chargé depuis le CDN.");
         }
 
-        // Récupération des données initiales via l'API
         fetch('/api/data')
           .then(res => res.json())
           .then(data => {
@@ -650,7 +643,6 @@ def run():
             setIsAuthLoading(false);
           });
 
-        // Écoute des mises à jour des autres collaborateurs en direct
         if (socketRef.current) {
           socketRef.current.on('data_updated', (newData) => {
             setServerData(newData);
@@ -681,7 +673,6 @@ def run():
         return () => window.removeEventListener('keydown', handleKeyDown);
       }, []);
 
-      // Centralisation de l'envoi des données vers le backend
       const updateServer = (mutationFn) => {
         setServerData(prevData => {
           const newData = mutationFn(prevData);
@@ -747,7 +738,6 @@ def run():
         setSelectedCellId(null);
       };
 
-      // --- Authentification ---
       const handleAuth = async (e) => {
         e.preventDefault();
         const trimmedUsername = inputUsername.trim();
@@ -778,12 +768,11 @@ def run():
 
       const handleLogout = () => {
         localStorage.removeItem('collab_notebook_uid');
-        setUser(null); setCurrentNbId(null); setSelectedCellId(null);
+        setUser(null); setCurrentNbId(null); setSelectedCellId(null); setClipboardCell(null);
         setInputUsername(''); setInputPassword('');
         setHistoryPast([]); setHistoryFuture([]);
       };
 
-      // --- Modification du Profil ---
       const handleSaveProfile = async (e) => {
         e.preventDefault();
         const trimmedUsername = profileForm.username.trim();
@@ -818,7 +807,6 @@ def run():
         setIsProfileOpen(false);
       };
 
-      // Importation de fichier image pour la photo de profil
       const handleImageUpload = (e) => {
         const file = e.target.files[0];
         if (file) {
@@ -828,7 +816,6 @@ def run():
         }
       };
 
-      // --- Notebook Actions ---
       const handleCreateNotebook = () => {
         const myData = serverData.users.find(u => u.id === user.uid);
         if (!user || !myData) return;
@@ -1023,10 +1010,67 @@ for key in list(globals().keys()):
         handleSnapshot();
         const newCellId = generateUUID();
         updateServer(data => {
-          const nbCells = (data.cells || []).filter(c => c.notebookId === currentNbId);
-          const newOrder = nbCells.length > 0 ? Math.max(...nbCells.map(c => c.order)) + 10 : 10;
+          const nbCells = data.cells.filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
+          let newOrder = 10;
+          if (selectedCellId) {
+             const selectedIndex = nbCells.findIndex(c => c.id === selectedCellId);
+             if (selectedIndex !== -1) {
+                if (selectedIndex < nbCells.length - 1) {
+                    newOrder = (nbCells[selectedIndex].order + nbCells[selectedIndex + 1].order) / 2;
+                } else {
+                    newOrder = nbCells[selectedIndex].order + 10;
+                }
+             } else {
+                newOrder = nbCells.length > 0 ? nbCells[nbCells.length - 1].order + 10 : 10;
+             }
+          } else {
+             newOrder = nbCells.length > 0 ? nbCells[nbCells.length - 1].order + 10 : 10;
+          }
           const newCell = { id: newCellId, notebookId: currentNbId, code: '', type: 'code', output: '', status: 'idle', order: newOrder, locked: false };
-          return { ...data, cells: [...(data.cells || []), newCell] };
+          return { ...data, cells: [...data.cells, newCell] };
+        });
+        setSelectedCellId(newCellId);
+      };
+
+      const handleCopyCell = () => {
+        if (!selectedCellId) return;
+        const cell = serverData.cells.find(c => c.id === selectedCellId);
+        if (cell) setClipboardCell({ ...cell, id: undefined });
+      };
+
+      const handleCutCell = () => {
+        if (!selectedCellId) return;
+        const cell = serverData.cells.find(c => c.id === selectedCellId);
+        if (cell) {
+           setClipboardCell({ ...cell, id: undefined });
+           handleDeleteCell(selectedCellId);
+        }
+      };
+
+      const handlePasteCell = () => {
+        if (!clipboardCell || !currentNbId) return;
+        handleSnapshot();
+        const newCellId = generateUUID();
+        
+        updateServer(data => {
+          const nbCells = data.cells.filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
+          let newOrder = 10;
+          if (selectedCellId) {
+             const selectedIndex = nbCells.findIndex(c => c.id === selectedCellId);
+             if (selectedIndex !== -1) {
+                if (selectedIndex < nbCells.length - 1) {
+                    newOrder = (nbCells[selectedIndex].order + nbCells[selectedIndex + 1].order) / 2;
+                } else {
+                    newOrder = nbCells[selectedIndex].order + 10;
+                }
+             } else {
+                newOrder = nbCells.length > 0 ? nbCells[nbCells.length - 1].order + 10 : 10;
+             }
+          } else {
+             newOrder = nbCells.length > 0 ? nbCells[nbCells.length - 1].order + 10 : 10;
+          }
+          const newCell = { ...clipboardCell, id: newCellId, notebookId: currentNbId, order: newOrder };
+          return { ...data, cells: [...data.cells, newCell] };
         });
         setSelectedCellId(newCellId);
       };
@@ -1407,50 +1451,81 @@ for key in list(globals().keys()):
             </nav>
 
             {/* Barre secondaire GLOBALE : Actions sur la cellule sélectionnée */}
-            {selectedCell ? (
-               <div className="bg-gray-100 dark:bg-[#1e232b] border-b border-gray-200 dark:border-slate-700/50 px-2 sm:px-4 py-1.5 flex items-center gap-2 overflow-x-auto no-scrollbar shadow-inner min-h-[44px]">
-                 <span className="text-[10px] font-bold text-primary-500 whitespace-nowrap hidden sm:block tracking-widest uppercase">Édition</span>
-                 <div className="w-px h-4 bg-gray-300 dark:bg-slate-700 hidden sm:block mx-2"></div>
-                 
-                 <select
-                    value={selectedCell.type || 'code'}
-                    disabled={selectedCell.locked}
-                    onChange={(e) => handleUpdateCellType(selectedCell.id, e.target.value)}
-                    className="flex-shrink-0 bg-white dark:bg-[#2d2d2d] border border-gray-300 dark:border-slate-700 text-xs sm:text-sm text-gray-700 dark:text-slate-200 rounded px-2 py-1 outline-none focus:border-primary-500 disabled:opacity-50 cursor-pointer"
-                 >
-                    <option value="code">Code Python</option>
-                    <option value="markdown">Markdown</option>
-                    <option value="raw">Texte brut</option>
-                    <option value="heading">Titre</option>
-                 </select>
+            <div className="bg-gray-100 dark:bg-[#1e232b] border-b border-gray-200 dark:border-slate-700/50 px-2 sm:px-4 py-1.5 flex items-center gap-2 overflow-x-auto no-scrollbar shadow-inner min-h-[44px]">
+               
+               {/* NOUVEAU : Bouton Ajouter en haut */}
+               <button onClick={handleAddCell} className="flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 hover:bg-primary-700 text-white rounded text-xs sm:text-sm font-medium transition-colors shadow-sm flex-shrink-0">
+                 <Plus size={14} /> <span className="hidden sm:inline">Ajouter cellule</span>
+               </button>
+               
+               {/* Actions Presse-Papiers Globales */}
+               <div className="flex items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 flex-shrink-0 ml-1">
+                 <button onClick={handlePasteCell} disabled={!clipboardCell} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Coller la cellule">
+                   <ClipboardPaste size={14} />
+                 </button>
+               </div>
 
-                 <div className="flex flex-shrink-0 items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 ml-2">
-                   <button onClick={() => handleMoveCell(selectedCell.id, 'up')} disabled={isSelectedCellFirst || selectedCell.locked} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-l hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Monter"><ArrowUp size={14} /></button>
-                   <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
-                   <button onClick={() => handleMoveCell(selectedCell.id, 'down')} disabled={isSelectedCellLast || selectedCell.locked} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Descendre"><ArrowDown size={14} /></button>
-                 </div>
+               <div className="w-px h-4 bg-gray-300 dark:bg-slate-700 mx-1 flex-shrink-0 hidden sm:block"></div>
+               
+               {/* Actions sur la cellule SÉLECTIONNÉE */}
+               {selectedCell ? (
+                 <React.Fragment>
+                   <select
+                      value={selectedCell.type || 'code'}
+                      disabled={selectedCell.locked}
+                      onChange={(e) => handleUpdateCellType(selectedCell.id, e.target.value)}
+                      className="flex-shrink-0 bg-white dark:bg-[#2d2d2d] border border-gray-300 dark:border-slate-700 text-xs sm:text-sm text-gray-700 dark:text-slate-200 rounded px-2 py-1 outline-none focus:border-primary-500 disabled:opacity-50 cursor-pointer"
+                   >
+                      <option value="code">Code Python</option>
+                      <option value="markdown">Markdown</option>
+                      <option value="raw">Texte brut</option>
+                      <option value="heading">Titre</option>
+                   </select>
+                   
+                   {/* Copier / Couper */}
+                   <div className="flex items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 flex-shrink-0">
+                     <button onClick={handleCopyCell} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-primary-500 dark:hover:text-primary-400 rounded-l hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Copier"><Copy size={14} /></button>
+                     <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
+                     <button onClick={handleCutCell} disabled={selectedCell.locked} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-red-500 dark:hover:text-red-400 disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Couper"><Scissors size={14} /></button>
+                   </div>
 
-                 <div className="flex flex-shrink-0 items-center gap-2 ml-auto">
-                   {activeNotebook?.ownerUid === user?.uid && (
-                     <button onClick={() => handleToggleLock(selectedCell.id, selectedCell.locked)} className={`flex items-center gap-1.5 px-2 py-1.5 rounded transition-colors text-xs font-medium ${selectedCell.locked ? 'text-amber-600 bg-amber-100 dark:text-amber-400 dark:bg-amber-900/30' : 'text-gray-600 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-[#3c3c3c]'}`} title={selectedCell.locked ? "Déverrouiller" : "Verrouiller"}>
-                       {selectedCell.locked ? <Lock size={14} /> : <Unlock size={14} />} <span className="hidden sm:inline">{selectedCell.locked ? 'Verrouillé' : 'Libre'}</span>
-                     </button>
-                   )}
-                   {selectedCell.type === 'code' && (
-                      <button onClick={() => handleClearSelectedOutput(selectedCell.id)} disabled={!selectedCell.output && selectedCell.status !== 'error'} className="flex items-center gap-1.5 px-2 py-1.5 text-gray-600 dark:text-slate-300 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-[#3c3c3c] disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Effacer la console">
-                         <XCircle size={14} /> <span className="hidden sm:inline">Effacer console</span>
-                      </button>
-                   )}
-                   <button onClick={() => handleDeleteCell(selectedCell.id)} disabled={selectedCell.locked && activeNotebook?.ownerUid !== user?.uid} className="flex items-center gap-1.5 px-2 py-1.5 text-red-600 bg-red-50 border border-red-200 dark:text-red-400 dark:bg-red-950/30 dark:border-red-900/50 hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Supprimer la cellule">
-                      <Trash2 size={14} /> <span className="hidden sm:inline">Supprimer</span>
+                   {/* Move Up / Down */}
+                   <div className="flex items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 flex-shrink-0 ml-1">
+                     <button onClick={() => handleMoveCell(selectedCell.id, 'up')} disabled={isSelectedCellFirst || selectedCell.locked} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-l hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Monter"><ArrowUp size={14} /></button>
+                     <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
+                     <button onClick={() => handleMoveCell(selectedCell.id, 'down')} disabled={isSelectedCellLast || selectedCell.locked} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Descendre"><ArrowDown size={14} /></button>
+                   </div>
+
+                   {/* NOUVEAU : Exécuter en haut (Highlight) */}
+                   <button 
+                      onClick={() => { if(cellRunRefs.current[selectedCell.id]) cellRunRefs.current[selectedCell.id](); }} 
+                      disabled={selectedCell.type === 'code' && (isPyodideLoading || !pyodide)} 
+                      className={`flex items-center gap-1.5 px-3 py-1.5 ml-2 text-white text-xs sm:text-sm font-bold rounded transition-colors shadow-sm flex-shrink-0 ${selectedCell.status === 'running' ? 'bg-amber-500 hover:bg-amber-600' : 'bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-400 dark:disabled:bg-slate-700 disabled:opacity-50'}`}
+                   >
+                     {selectedCell.status === 'running' ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} className="fill-current" />}
+                     <span className="hidden sm:inline">{selectedCell.type === 'code' ? (selectedCell.status === 'running' ? 'En cours' : 'Exécuter') : 'Valider'}</span>
                    </button>
-                 </div>
-               </div>
-            ) : (
-               <div className="bg-gray-100 dark:bg-[#1e1e1e] border-b border-gray-200 dark:border-slate-800 px-4 py-2 min-h-[44px] flex items-center justify-center">
-                 <span className="text-xs text-gray-500 dark:text-slate-500 italic">Sélectionnez une cellule pour la modifier</span>
-               </div>
-            )}
+
+                   <div className="flex items-center gap-1 sm:gap-2 ml-auto flex-shrink-0">
+                     {activeNotebook?.ownerUid === user?.uid && (
+                       <button onClick={() => handleToggleLock(selectedCell.id, selectedCell.locked)} className={`flex items-center gap-1.5 px-2 py-1.5 rounded transition-colors text-xs font-medium ${selectedCell.locked ? 'text-amber-600 bg-amber-100 dark:text-amber-400 dark:bg-amber-900/30' : 'text-gray-600 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-[#3c3c3c]'}`} title={selectedCell.locked ? "Déverrouiller" : "Verrouiller"}>
+                         {selectedCell.locked ? <Lock size={14} /> : <Unlock size={14} />} <span className="hidden md:inline">{selectedCell.locked ? 'Verrouillé' : 'Libre'}</span>
+                       </button>
+                     )}
+                     {selectedCell.type === 'code' && (
+                        <button onClick={() => handleClearSelectedOutput(selectedCell.id)} disabled={!selectedCell.output && selectedCell.status !== 'error'} className="flex items-center gap-1.5 px-2 py-1.5 text-gray-600 dark:text-slate-300 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-[#3c3c3c] disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Effacer la console">
+                           <XCircle size={14} /> <span className="hidden md:inline">Effacer console</span>
+                        </button>
+                     )}
+                     <button onClick={() => handleDeleteCell(selectedCell.id)} disabled={selectedCell.locked && activeNotebook?.ownerUid !== user?.uid} className="flex items-center gap-1.5 px-2 py-1.5 text-red-600 bg-red-50 border border-red-200 dark:text-red-400 dark:bg-red-950/30 dark:border-red-900/50 hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Supprimer la cellule">
+                        <Trash2 size={14} /> <span className="hidden md:inline">Supprimer</span>
+                     </button>
+                   </div>
+                 </React.Fragment>
+               ) : (
+                 <span className="text-xs text-gray-500 dark:text-slate-500 italic px-2 ml-2">Sélectionnez une cellule pour la modifier</span>
+               )}
+            </div>
           </div>
           
           <main className="max-w-5xl mx-auto py-4 sm:py-8 px-2 sm:px-4 flex-1 w-full">
