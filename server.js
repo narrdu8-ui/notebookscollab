@@ -1,50 +1,78 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const fs = require('fs');
+const { MongoClient } = require('mongodb');
 const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
-const DB_FILE = path.join(__dirname, 'db.json');
+// Le lien sera fourni par Render de manière sécurisée
+const MONGO_URI = process.env.MONGO_URI; 
+const DB_NAME = "collab_db";
 
-// Mémoire locale du serveur
+let db, dataCollection;
+// Données par défaut si la base est vide
 let globalData = { users: [], notebooks: [], cells: [] };
 
-// Au démarrage, on charge les données depuis db.json
-if (fs.existsSync(DB_FILE)) {
-    try {
-        globalData = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-    } catch (e) {
-        console.error("Erreur de lecture de db.json", e);
-    }
-}
-
-// Dire à Express de servir les fichiers statiques (ton index.html)
 app.use(express.static(__dirname));
 
-// Route API pour le chargement initial quand un client se connecte
+// --- INITIALISATION DE MONGODB ---
+async function initDB() {
+    if (!MONGO_URI) {
+        console.error("⚠️ ERREUR : La variable MONGO_URI n'est pas définie !");
+        return;
+    }
+
+    try {
+        const client = new MongoClient(MONGO_URI);
+        await client.connect();
+        console.log("✅ Connecté à MongoDB Atlas !");
+        
+        db = client.db(DB_NAME);
+        dataCollection = db.collection('app_data');
+
+        // On cherche le document principal qui contient tout ton state
+        const savedData = await dataCollection.findOne({ id: "main_state" });
+        
+        if (savedData) {
+            globalData = savedData.data;
+            console.log("Données chargées depuis MongoDB.");
+        } else {
+            // Premier lancement : on crée la structure de base
+            await dataCollection.insertOne({ id: "main_state", data: globalData });
+            console.log("Base de données initialisée.");
+        }
+    } catch (err) {
+        console.error("❌ Erreur de connexion MongoDB :", err);
+    }
+}
+initDB();
+
+// --- ROUTE API INITIALE ---
 app.get('/api/data', (req, res) => {
     res.json(globalData);
 });
 
-// Gestion du Temps Réel avec Socket.io
+// --- GESTION DU TEMPS RÉEL ---
 io.on('connection', (socket) => {
     console.log('Nouvel utilisateur connecté:', socket.id);
 
-    // Quand ce client fait une modification
-    socket.on('update_data', (newData) => {
-        globalData = newData; // Met à jour la RAM du serveur
+    // Quand un client modifie quelque chose
+    socket.on('update_data', async (newData) => {
+        globalData = newData; // Met à jour la RAM pour aller vite
         
-        // Sauvegarde dans le fichier db.json (en arrière-plan)
-        fs.writeFile(DB_FILE, JSON.stringify(globalData, null, 2), (err) => {
-            if (err) console.error("Erreur d'écriture db.json", err);
-        });
-
-        // ⚡️ LA MAGIE : Diffuse la nouveauté à TOUS les autres clients ⚡️
+        // Diffuse instantanément aux autres utilisateurs
         socket.broadcast.emit('data_updated', globalData);
+
+        // Sauvegarde silencieuse dans MongoDB en arrière-plan
+        if (dataCollection) {
+            dataCollection.updateOne(
+                { id: "main_state" },
+                { $set: { data: globalData } }
+            ).catch(err => console.error("Erreur de sauvegarde MongoDB", err));
+        }
     });
 
     socket.on('disconnect', () => {
@@ -52,7 +80,6 @@ io.on('connection', (socket) => {
     });
 });
 
-// Lancement du serveur (Render utilise process.env.PORT)
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`🚀 Serveur temps réel démarré sur le port ${PORT}`);
