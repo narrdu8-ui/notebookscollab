@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Collab Notebook Python (Auto-hébergé)</title>
+  <title>Collab Notebook Python (Node.js & MongoDB)</title>
   
   <!-- Tailwind CSS pour le style -->
   <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
@@ -24,10 +24,12 @@
     }
   </script>
 
-  <script src="/socket.io/socket.io.js"></script>
+  <!-- Socket.io pour le temps réel (VIA CDN POUR ÉVITER L'ERREUR window.io is not a function) -->
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   
+  <!-- Babel pour traduire le code React/JSX dans le navigateur -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  </script>
+  
   <style>
     /* Variables de couleurs personnalisables */
     :root {
@@ -47,15 +49,14 @@
     /* Scrollbar personnalisée style VS Code pour les sorties de console */
     .custom-scrollbar::-webkit-scrollbar { height: 10px; width: 10px; }
     .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.3); }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.3); border-radius: 4px; }
     .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(128, 128, 128, 0.5); }
     .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); }
     .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); }
   </style>
   
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-
-  <script type="text/map">
+  <!-- CORRECTION : type="importmap" indispensable pour React -->
+  <script type="importmap">
     {
       "imports": {
         "react": "https://esm.sh/react@18.2.0",
@@ -78,11 +79,8 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useRef } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Play, Plus, Trash2, Loader2, Users, Terminal, Code2, CheckCircle2, ArrowLeft, Share2, BookOpen, User, Lock, Edit2, Download, ArrowUp, ArrowDown, XCircle, Upload, LogOut, Key, Unlock, X, RotateCcw, RotateCw, Image as ImageIcon, Settings, Moon, Sun, Type } from 'lucide-react';
+    import { Play, Plus, Trash2, Loader2, Users, Terminal, Code2, CheckCircle2, ArrowLeft, Share2, BookOpen, User, Lock, Edit2, Download, ArrowUp, ArrowDown, XCircle, Upload, LogOut, Key, Unlock, X, RotateCcw, RotateCw, Image as ImageIcon, Settings, Moon, Sun, Type, RefreshCw } from 'lucide-react';
     import { marked } from 'marked';
-
-    const DB_URL = 'db.json';       
-    const API_URL = 'server.php';   
 
     const generateUUID = () => {
       if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
@@ -409,7 +407,7 @@ def run():
       );
     };
 
-    // --- CELLULE (Style VS Code pour Python, Simple pour le reste) ---
+    // --- CELLULE ---
     const Cell = ({ cell, isSelected, onSelect, onUpdate, pyodide, isPyodideLoading, isMonacoReady, registerRun, handleSnapshot, isDark }) => {
       const cellType = cell.type || 'code';
       const isLocked = cell.locked || false;
@@ -510,7 +508,7 @@ def run():
                {(cell.output || cell.status === 'running') && (
                   <div className="border-t border-gray-200 dark:border-[#3c3c3c] bg-gray-50 dark:bg-[#181818] p-3">
                      <div className="flex items-center gap-2 mb-2 text-gray-500 dark:text-[#cccccc] uppercase tracking-wider text-[10px] font-semibold">
-                        {cell.status === 'error' ? <XCircle size={12} className="text-red-500 dark:text-red-400" /> : 
+                        {cell.status === 'error' ? <XCircle size={12} className="text-red-500 dark:text-[#f48771]" /> : 
                          cell.status === 'running' ? <Loader2 size={12} className="animate-spin text-amber-500" /> : 
                          <Terminal size={12} />}
                         Terminal
@@ -602,6 +600,7 @@ def run():
       const fileInputRef = useRef(null);
       const fileInputCurrentRef = useRef(null);
       const cellRunRefs = useRef({});
+      const socketRef = useRef(null);
 
       const { pyodide, isPyodideLoading } = usePyodide();
       const isMonacoReady = useMonaco();
@@ -614,8 +613,6 @@ def run():
         if (savedTheme === 'light') setIsDark(false);
         const savedColor = localStorage.getItem('collab_color');
         if (savedColor) setThemeColor(savedColor);
-
-        setIsAuthLoading(false);
       }, []);
 
       useEffect(() => {
@@ -632,24 +629,34 @@ def run():
         return colors[color] || '#6366f1';
       };
 
-      // NOUVEAU SYSTÈME TEMPS RÉEL (WebSockets)
-      const socketRef = useRef(null);
-
+      // --- NOUVEAU SYSTÈME TEMPS RÉEL (WebSockets + MongoDB) ---
       useEffect(() => {
-        // 1. On se connecte au serveur WebSocket
-        socketRef.current = window.io();
+        // Sécurité : vérifier si io() est bien défini pour éviter l'erreur (window.io is not a function)
+        if (typeof window.io !== 'undefined') {
+          socketRef.current = window.io();
+        } else {
+          console.warn("⚠️ Socket.io n'a pas pu être chargé depuis le CDN.");
+        }
 
-        // 2. On récupère les données initiales
+        // Récupération des données initiales via l'API
         fetch('/api/data')
           .then(res => res.json())
-          .then(data => setServerData(data));
+          .then(data => {
+            if (data) setServerData(data);
+            setIsAuthLoading(false);
+          })
+          .catch(e => {
+            console.error("Erreur de chargement DB:", e);
+            setIsAuthLoading(false);
+          });
 
-        // 3. On écoute les modifications des AUTRES en direct
-        socketRef.current.on('data_updated', (newData) => {
-          setServerData(newData);
-        });
+        // Écoute des mises à jour des autres collaborateurs en direct
+        if (socketRef.current) {
+          socketRef.current.on('data_updated', (newData) => {
+            setServerData(newData);
+          });
+        }
 
-        // Nettoyage à la déconnexion
         return () => {
           if (socketRef.current) socketRef.current.disconnect();
         };
@@ -674,11 +681,11 @@ def run():
         return () => window.removeEventListener('keydown', handleKeyDown);
       }, []);
 
+      // Centralisation de l'envoi des données vers le backend
       const updateServer = (mutationFn) => {
         setServerData(prevData => {
           const newData = mutationFn(prevData);
           
-          // On envoie la modification au serveur via WebSocket ⚡️
           if (socketRef.current) {
             socketRef.current.emit('update_data', newData);
           }
@@ -715,8 +722,7 @@ def run():
            const otherCells = currentData.cells.filter(c => c.notebookId !== currentNbId);
            const newData = { ...currentData, cells: [...otherCells, ...previousCells] };
            
-           lastSaveTimeRef.current = Date.now();
-           fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newData) });
+           if (socketRef.current) socketRef.current.emit('update_data', newData);
            return newData;
         });
         setSelectedCellId(null);
@@ -735,8 +741,7 @@ def run():
            const otherCells = currentData.cells.filter(c => c.notebookId !== currentNbId);
            const newData = { ...currentData, cells: [...otherCells, ...nextCells] };
            
-           lastSaveTimeRef.current = Date.now();
-           fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newData) });
+           if (socketRef.current) socketRef.current.emit('update_data', newData);
            return newData;
         });
         setSelectedCellId(null);
@@ -778,6 +783,7 @@ def run():
         setHistoryPast([]); setHistoryFuture([]);
       };
 
+      // --- Modification du Profil ---
       const handleSaveProfile = async (e) => {
         e.preventDefault();
         const trimmedUsername = profileForm.username.trim();
@@ -812,6 +818,7 @@ def run():
         setIsProfileOpen(false);
       };
 
+      // Importation de fichier image pour la photo de profil
       const handleImageUpload = (e) => {
         const file = e.target.files[0];
         if (file) {
@@ -821,6 +828,7 @@ def run():
         }
       };
 
+      // --- Notebook Actions ---
       const handleCreateNotebook = () => {
         const myData = serverData.users.find(u => u.id === user.uid);
         if (!user || !myData) return;
@@ -1102,7 +1110,7 @@ for key in list(globals().keys()):
 
       const Avatar = ({ url, name, size=14 }) => url ? <img src={url} alt={name} style={{width: size+10, height: size+10}} className="rounded-full object-cover border border-slate-700" /> : <User size={size} />;
 
-      if (isAuthLoading) return <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-primary-500"><Loader2 className="w-10 h-10 animate-spin mb-4" /><p>Chargement local...</p></div>;
+      if (isAuthLoading) return <div className="min-h-screen flex flex-col items-center justify-center text-primary-500"><Loader2 className="w-10 h-10 animate-spin mb-4" /><p>Connexion au serveur...</p></div>;
 
       if (!userData) {
         return (
@@ -1128,6 +1136,29 @@ for key in list(globals().keys()):
         );
       }
 
+      // Composant Menu Paramètres
+      const SettingsMenu = () => (
+        <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-50">
+          <h4 className="font-semibold text-gray-900 dark:text-white mb-4 border-b border-gray-100 dark:border-slate-700 pb-2">Paramètres de l'interface</h4>
+          <div className="flex items-center justify-between mb-4">
+            <span className="text-sm text-gray-600 dark:text-slate-300">Mode Sombre</span>
+            <button onClick={() => setIsDark(!isDark)} className={`w-12 h-6 rounded-full flex items-center transition-colors p-1 ${isDark ? 'bg-primary-600 justify-end' : 'bg-gray-300 justify-start'}`}>
+              <div className="w-4 h-4 rounded-full bg-white flex items-center justify-center">
+                 {isDark ? <Moon size={10} className="text-primary-600"/> : <Sun size={10} className="text-amber-500"/>}
+              </div>
+            </button>
+          </div>
+          <div className="mb-2">
+            <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block">Couleur Principale</span>
+            <div className="flex gap-2">
+               {['indigo', 'emerald', 'rose', 'amber', 'purple'].map(color => (
+                 <button key={color} onClick={() => setThemeColor(color)} className={`w-6 h-6 rounded-full border-2 ${themeColor === color ? 'border-gray-900 dark:border-white scale-110' : 'border-transparent hover:scale-110'} transition-transform`} style={{ backgroundColor: getThemeHex(color) }} title={color} />
+               ))}
+            </div>
+          </div>
+        </div>
+      );
+
       if (!currentNbId) {
         return (
           <div className="min-h-screen p-4 md:p-8 transition-colors">
@@ -1151,27 +1182,7 @@ for key in list(globals().keys()):
                   
                   <div className="relative">
                      <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"><Settings size={20}/></button>
-                     {isSettingsOpen && (
-                        <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-50">
-                          <h4 className="font-semibold text-gray-900 dark:text-white mb-4 border-b border-gray-100 dark:border-slate-700 pb-2">Paramètres de l'interface</h4>
-                          <div className="flex items-center justify-between mb-4">
-                            <span className="text-sm text-gray-600 dark:text-slate-300">Mode Sombre</span>
-                            <button onClick={() => setIsDark(!isDark)} className={`w-12 h-6 rounded-full flex items-center transition-colors p-1 ${isDark ? 'bg-primary-600 justify-end' : 'bg-gray-300 justify-start'}`}>
-                              <div className="w-4 h-4 rounded-full bg-white flex items-center justify-center">
-                                 {isDark ? <Moon size={10} className="text-primary-600"/> : <Sun size={10} className="text-amber-500"/>}
-                              </div>
-                            </button>
-                          </div>
-                          <div className="mb-2">
-                            <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block">Couleur Principale</span>
-                            <div className="flex gap-2">
-                               {['indigo', 'emerald', 'rose', 'amber', 'purple'].map(color => (
-                                 <button key={color} onClick={() => setThemeColor(color)} className={`w-6 h-6 rounded-full border-2 ${themeColor === color ? 'border-gray-900 dark:border-white scale-110' : 'border-transparent hover:scale-110'} transition-transform`} style={{ backgroundColor: getThemeHex(color) }} title={color} />
-                               ))}
-                            </div>
-                          </div>
-                        </div>
-                     )}
+                     {isSettingsOpen && <SettingsMenu />}
                   </div>
 
                   <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Se déconnecter"><LogOut size={20}/></button>
@@ -1229,7 +1240,7 @@ for key in list(globals().keys()):
                       {myNotebooks.map(nb => (
                         <div key={nb.id} onClick={() => { setCurrentNbId(nb.id); setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null); }} className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 shadow-sm group relative">
                           <button onClick={(e) => handleDeleteNotebook(e, nb.id)} className="absolute top-4 right-4 p-1.5 text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-slate-800 rounded transition-all opacity-0 group-hover:opacity-100" title="Supprimer ce notebook"><Trash2 size={16} /></button>
-                          <h3 className="text-lg font-medium mb-2 pr-6 truncate">{nb.title}</h3>
+                          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2 pr-6 truncate">{nb.title}</h3>
                           <p className="text-sm text-gray-500 dark:text-slate-500 truncate">Partagé avec: {nb.sharedWith.length === 0 ? 'Personne' : nb.sharedWith.join(', ')}</p>
                         </div>
                       ))}
@@ -1245,7 +1256,7 @@ for key in list(globals().keys()):
                          return (
                           <div key={nb.id} onClick={() => { setCurrentNbId(nb.id); setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null); }} className="bg-white dark:bg-slate-900 border border-primary-100 dark:border-primary-900/50 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 relative overflow-hidden shadow-sm flex flex-col justify-between">
                             <div className="absolute top-0 left-0 w-1 h-full bg-primary-500"></div>
-                            <h3 className="text-lg font-medium mb-4 truncate">{nb.title}</h3>
+                            <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-4 truncate">{nb.title}</h3>
                             <div className="flex items-center gap-2">
                                <Avatar url={owner?.avatarUrl} name={nb.ownerUsername} size={18} />
                                <span className="text-sm text-primary-600 dark:text-primary-400 truncate">{nb.ownerUsername}</span>
@@ -1302,7 +1313,7 @@ for key in list(globals().keys()):
             </div>
           )}
 
-          {/* ZONE DE NAVIGATION TOP ET BARRE GLOBALE - Sticky */}
+          {/* ZONE DE NAVIGATION TOP - Sticky */}
           <div className="sticky top-0 z-20 flex flex-col shadow-md">
             
             {/* Barre principale */}
@@ -1397,7 +1408,7 @@ for key in list(globals().keys()):
 
             {/* Barre secondaire GLOBALE : Actions sur la cellule sélectionnée */}
             {selectedCell ? (
-               <div className="bg-gray-100 dark:bg-[#1e1e1e] border-b border-gray-200 dark:border-slate-800 px-2 sm:px-4 py-2 flex items-center gap-2 overflow-x-auto no-scrollbar shadow-inner">
+               <div className="bg-gray-100 dark:bg-[#1e232b] border-b border-gray-200 dark:border-slate-700/50 px-2 sm:px-4 py-1.5 flex items-center gap-2 overflow-x-auto no-scrollbar shadow-inner min-h-[44px]">
                  <span className="text-[10px] font-bold text-primary-500 whitespace-nowrap hidden sm:block tracking-widest uppercase">Édition</span>
                  <div className="w-px h-4 bg-gray-300 dark:bg-slate-700 hidden sm:block mx-2"></div>
                  
@@ -1437,7 +1448,7 @@ for key in list(globals().keys()):
                </div>
             ) : (
                <div className="bg-gray-100 dark:bg-[#1e1e1e] border-b border-gray-200 dark:border-slate-800 px-4 py-2 min-h-[44px] flex items-center justify-center">
-                 <span className="text-xs text-gray-500 dark:text-slate-500 italic">Sélectionnez une cellule pour modifier son type ou la supprimer</span>
+                 <span className="text-xs text-gray-500 dark:text-slate-500 italic">Sélectionnez une cellule pour la modifier</span>
                </div>
             )}
           </div>
