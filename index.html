@@ -5,10 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Collab Notebook Python (Auto-hébergé)</title>
   
-  <!-- Ajout du logo de l'onglet -->
   <link rel="icon" type="image/png" href="logocollab.png" />
-  
-  <!-- Tailwind CSS pour le style -->
   <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
   <script>
     tailwind.config = {
@@ -27,12 +24,9 @@
     }
   </script>
 
-  <!-- Utilisation d'un CDN pour Socket.IO afin d'éviter l'erreur 404 -->
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
-  
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
-    /* Variables de couleurs personnalisables */
     :root {
       --color-primary-500: #6366f1; 
       --color-primary-600: #4f46e5;
@@ -43,11 +37,9 @@
     .theme-amber { --color-primary-500: #f59e0b; --color-primary-600: #d97706; --color-primary-700: #b45309; }
     .theme-purple { --color-primary-500: #a855f7; --color-primary-600: #9333ea; --color-primary-700: #7e22ce; }
 
-    /* Cache la scrollbar horizontale des barres d'outils sur mobile */
     .no-scrollbar::-webkit-scrollbar { display: none; }
     .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     
-    /* Scrollbar personnalisée style VS Code pour les sorties de console */
     .custom-scrollbar::-webkit-scrollbar { height: 10px; width: 10px; }
     .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
     .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(128, 128, 128, 0.3); }
@@ -118,7 +110,6 @@
       }
     };
 
-    // Générateur de couleur unique basé sur l'ID de l'utilisateur (pour les curseurs)
     const getUserColor = (uid) => {
         if (!uid) return '#6366f1';
         const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f43f5e', '#84cc16', '#6366f1'];
@@ -306,11 +297,13 @@ def run():
       return isReady;
     };
 
-    const MonacoEditor = ({ value, onChange, onFocus, onBlur, onRun, language = 'python', readOnly = false, isDark, onCursorChange, remoteCursors = [] }) => {
+    // --- MONACO EDITOR REFAIT POUR SYNCHRONISATION CHIRURGICALE ---
+    const MonacoEditor = ({ cellId, value, onChangeCode, onSilentUpdate, onFocus, onBlur, onRun, language = 'python', readOnly = false, isDark, onCursorChange, remoteCursors = [] }) => {
       const editorContainerRef = useRef(null);
       const editorRef = useRef(null);
       const decorationsCollectionRef = useRef(null);
       const cursorTimeoutRef = useRef(null);
+      const isRemoteUpdateRef = useRef(false);
 
       useEffect(() => {
         if (editorContainerRef.current && !editorRef.current && window.monaco) {
@@ -333,8 +326,8 @@ def run():
             padding: { top: 12, bottom: 12 },
             readOnly: readOnly,
             renderLineHighlight: 'none',
-            occurrencesHighlight: false, // Empêche de surligner la fin des mots
-            selectionHighlight: false,   // Empêche la sélection automatique des mots similaires
+            occurrencesHighlight: false,
+            selectionHighlight: false,  
             matchBrackets: 'never'
           });
 
@@ -352,9 +345,12 @@ def run():
           editorRef.current.onDidContentSizeChange(updateHeight);
           setTimeout(updateHeight, 0);
 
-          editorRef.current.onDidChangeModelContent(() => {
-              onChange(editorRef.current.getValue());
+          // Émet les deltas (changes) précis, pas seulement le full texte
+          editorRef.current.onDidChangeModelContent((e) => {
+              if (isRemoteUpdateRef.current) return; // Ignore l'événement si on est en train d'appliquer la frappe de quelqu'un d'autre
+              onChangeCode(editorRef.current.getValue(), e.changes);
           });
+          
           editorRef.current.onDidFocusEditorText(onFocus);
           editorRef.current.onDidBlurEditorText(onBlur);
         }
@@ -365,6 +361,60 @@ def run():
           }
         };
       }, []);
+
+      // Écouteur global pour l'injection chirurgicale des frappes distantes !
+      useEffect(() => {
+        const handleRemoteEdits = (e) => {
+            const { code, changes } = e.detail;
+            if (editorRef.current && window.monaco) {
+                isRemoteUpdateRef.current = true;
+                
+                if (changes && changes.length > 0) {
+                    // Application des deltas = 0 saut de curseur, 100% collaboratif fluide !
+                    const edits = changes.map(change => ({
+                        range: new window.monaco.Range(
+                            change.range.startLineNumber,
+                            change.range.startColumn,
+                            change.range.endLineNumber,
+                            change.range.endColumn
+                        ),
+                        text: change.text,
+                        forceMoveMarkers: true
+                    }));
+                    editorRef.current.executeEdits("remote", edits);
+                } else {
+                    // Fallback de sécurité : on remplace tout si pas de deltas (ex: undo/redo distant)
+                    const model = editorRef.current.getModel();
+                    editorRef.current.executeEdits("remote", [{
+                        range: model.getFullModelRange(),
+                        text: code
+                    }]);
+                }
+                
+                isRemoteUpdateRef.current = false;
+                onSilentUpdate(editorRef.current.getValue());
+            }
+        };
+        
+        window.addEventListener(`apply_monaco_edits_${cellId}`, handleRemoteEdits);
+        return () => window.removeEventListener(`apply_monaco_edits_${cellId}`, handleRemoteEdits);
+      }, [cellId]);
+
+      // Si le 'value' React change mais qu'on N'EST PAS focus, c'est sûrement
+      // un chargement initial, ou un changement de type de cellule.
+      useEffect(() => {
+        if (editorRef.current && window.monaco) {
+          const currentValue = editorRef.current.getValue();
+          if (value !== currentValue && !editorRef.current.hasTextFocus()) {
+            isRemoteUpdateRef.current = true;
+            editorRef.current.executeEdits("system", [{
+                range: editorRef.current.getModel().getFullModelRange(),
+                text: value
+            }]);
+            isRemoteUpdateRef.current = false;
+          }
+        }
+      }, [value]);
 
       useEffect(() => {
         if (editorRef.current && window.monaco && onCursorChange) {
@@ -394,13 +444,10 @@ def run():
                           stickiness: window.monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
                       }
                   });
-                  // Surligner la sélection de l'autre utilisateur
                   if (c.selection && (c.selection.startLineNumber !== c.selection.endLineNumber || c.selection.startColumn !== c.selection.endColumn)) {
                       newDecorations.push({
                           range: new window.monaco.Range(c.selection.startLineNumber, c.selection.startColumn, c.selection.endLineNumber, c.selection.endColumn),
-                          options: {
-                              className: `remote-selection-${c.userId}`,
-                          }
+                          options: { className: `remote-selection-${c.userId}` }
                       });
                   }
               });
@@ -427,20 +474,6 @@ def run():
         }
       }, [isDark]);
 
-      // INNOVATION : Utilise executeEdits pour actualiser le code des autres de manière fluide, sans faire sauter le curseur
-      useEffect(() => {
-        if (editorRef.current && window.monaco) {
-          const currentValue = editorRef.current.getValue();
-          if (value !== currentValue) {
-            const model = editorRef.current.getModel();
-            editorRef.current.executeEdits("remote", [{
-                range: model.getFullModelRange(),
-                text: value
-            }]);
-          }
-        }
-      }, [value]);
-
       useEffect(() => {
         let action;
         if (editorRef.current && window.monaco && onRun) {
@@ -448,14 +481,10 @@ def run():
                 id: 'run-cell-shortcut',
                 label: 'Run Cell',
                 keybindings: [window.monaco.KeyMod.Shift | window.monaco.KeyCode.Enter],
-                run: () => {
-                    onRun();
-                }
+                run: () => { onRun(); }
             });
         }
-        return () => {
-            if (action) action.dispose();
-        };
+        return () => { if (action) action.dispose(); };
       }, [onRun]);
 
       return (
@@ -466,7 +495,7 @@ def run():
     };
 
     // --- CELLULE ---
-    const Cell = ({ cell, isSelected, onSelect, onUpdate, onUpdateCursor, remoteCursors, pyodide, isPyodideLoading, isMonacoReady, registerRun, handleSnapshot, isDark, hasAdminRights }) => {
+    const Cell = ({ cell, isSelected, onSelect, onUpdateProperty, onUpdateCode, onUpdateCursor, remoteCursors, pyodide, isPyodideLoading, isMonacoReady, registerRun, handleSnapshot, isDark, hasAdminRights }) => {
       const cellType = cell.type || 'code';
       const isLocked = cell.locked || false;
       const isCode = cellType === 'code';
@@ -475,31 +504,40 @@ def run():
       const [localCode, setLocalCode] = useState(cell.code || '');
       const [isFocused, setIsFocused] = useState(false);
       const [isEditingContent, setIsEditingContent] = useState((cellType === 'markdown' || cellType === 'heading') ? !cell.code : false);
-      const typingTimeoutRef = useRef(null);
 
-      // Verrouillage STRICT : Même un admin doit d'abord déverrouiller avant d'éditer
       const enforceLock = isLocked;
 
-      // Met toujours à jour le state local avec les données du serveur pour éviter les conflits
+      // On écoute les changements props (utile pour le premier rendu ou un full sync undo/redo)
       useEffect(() => {
         if (cell.code !== localCode) {
            setLocalCode(cell.code);
         }
       }, [cell.code]);
 
-      const handleChange = (newValue) => {
-        if (enforceLock) return; // Strict lock
+      // Quand on tape sur NOTRE clavier
+      const handleCodeChange = (newValue, changes) => {
+        if (enforceLock) return;
+        setLocalCode(newValue); // MàJ immédiate pour la réactivité de notre UI
+        
+        // On envoie le texte (et les deltas s'il y en a) via le canal dédié rapide
+        if (changes && onUpdateCode) {
+            onUpdateCode(cell.id, newValue, changes);
+        } else if (onUpdateProperty) {
+            // S'il n'y a pas de deltas (ex: le user a switché le type Markdown/Code et reset), on met à jour la prop complète
+            onUpdateProperty(cell.id, { code: newValue });
+        }
+      };
+
+      // Invoqué par MonacoEditor après l'application chirurgicale du code distant (sans émettre en retour)
+      const handleSilentUpdate = (newValue) => {
         setLocalCode(newValue);
-        if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-        // Temps d'attente extrêmement court (50ms) pour une réactivité instantanée lettre par lettre
-        typingTimeoutRef.current = setTimeout(() => onUpdate(cell.id, { code: newValue }), 50);
       };
 
       const handleRun = async () => {
         if (!isCode) {
           setIsEditingContent(false);
           if (handleSnapshot) handleSnapshot();
-          onUpdate(cell.id, { code: localCode });
+          onUpdateProperty(cell.id, { code: localCode });
           return;
         }
 
@@ -511,7 +549,7 @@ def run():
         }
         window.current_p5_target = `p5-target-${cell.id}`;
         
-        onUpdate(cell.id, { status: 'running', output: '' });
+        onUpdateProperty(cell.id, { status: 'running', output: '' });
         
         let currentOutput = "";
         pyodide.setStdout({ batched: (msg) => currentOutput += msg + "\n" });
@@ -520,7 +558,7 @@ def run():
         try {
           await pyodide.loadPackagesFromImports(localCode);
           await pyodide.runPythonAsync(localCode);
-          onUpdate(cell.id, { output: currentOutput || "[Exécuté avec succès]", status: 'idle' });
+          onUpdateProperty(cell.id, { output: currentOutput || "[Exécuté avec succès]", status: 'idle' });
         } catch (err) {
           let errorMsg = err.toString();
           currentOutput += errorMsg;
@@ -528,7 +566,7 @@ def run():
             const match = errorMsg.match(/No module named '([^']+)'/);
             if (match) currentOutput += `\n\n💡 ASTUCE :\nSi le module '${match[1]}' existe sur PyPI, utilisez : \nimport micropip\nawait micropip.install('${match[1]}')`;
           }
-          onUpdate(cell.id, { output: currentOutput, status: 'error' });
+          onUpdateProperty(cell.id, { output: currentOutput, status: 'error' });
         }
       };
 
@@ -540,7 +578,6 @@ def run():
       if (isCode) {
         return (
           <div className="flex flex-col sm:flex-row items-start gap-1 sm:gap-4 w-full mt-4 mb-2 group">
-            {/* Indication modifiée */}
             <div className="flex sm:w-20 shrink-0 sm:justify-end pt-1 sm:pt-3 font-mono text-xs sm:text-sm text-primary-600 dark:text-primary-500 select-none pl-1 sm:pl-0">
               Entrée [{cellIndex}]:
             </div>
@@ -549,7 +586,6 @@ def run():
               className={`flex-1 min-w-0 flex flex-col rounded-md overflow-hidden border transition-all ${isSelected ? 'border-primary-500 shadow-md ring-1 ring-primary-500/30' : 'border-gray-300 dark:border-[#3c3c3c]'}`}
               onClick={() => onSelect(cell.id)}
             >
-              {/* Header */}
               <div className="flex items-center justify-end bg-gray-100 dark:bg-[#252526] pr-2 py-1 select-none border-b border-gray-200 dark:border-[#3c3c3c]">
                  {isLocked && <Lock size={12} className={`mr-auto ml-2 ${hasAdminRights ? 'text-emerald-500/80' : 'text-amber-500/50'}`} title="Cellule Verrouillée" />}
                  <button onClick={(e) => { e.stopPropagation(); handleRun(); }} disabled={isPyodideLoading || !pyodide} className="p-1.5 text-gray-600 dark:text-[#cccccc] hover:bg-gray-300 dark:hover:bg-[#333333] hover:text-primary-500 rounded transition-colors disabled:opacity-50 flex items-center gap-1 text-xs font-medium" title="Exécuter (Run) ou Maj+Entrée">
@@ -558,13 +594,14 @@ def run():
                  </button>
               </div>
 
-              {/* Éditeur Monaco */}
               <div className={`bg-white dark:bg-[#1e1e1e] ${isLocked ? 'opacity-90' : ''} overflow-hidden`}>
                  {isMonacoReady ? (
                     <MonacoEditor 
+                        cellId={cell.id}
                         language="python" 
                         value={localCode} 
-                        onChange={handleChange} 
+                        onChangeCode={handleCodeChange} 
+                        onSilentUpdate={handleSilentUpdate}
                         onFocus={() => setIsFocused(true)} 
                         onBlur={() => setIsFocused(false)} 
                         onRun={handleRun} 
@@ -578,7 +615,6 @@ def run():
                  )}
               </div>
 
-              {/* Terminal Intégré (Sortie) */}
               <div className="bg-white dark:bg-[#1e1e1e]">
                  <div id={`p5-target-${cell.id}`} className="empty:hidden flex justify-center bg-white w-full overflow-x-auto border-t border-gray-200 dark:border-[#3c3c3c]"></div>
                  
@@ -604,12 +640,10 @@ def run():
         );
       }
 
-      // --- RENDU STANDARD (TEXTE, MARKDOWN, TITRE) ---
       const alignClass = cell.align === 'center' ? 'text-center' : cell.align === 'right' ? 'text-right' : 'text-left';
 
       return (
         <div className="flex flex-col sm:flex-row items-start gap-1 sm:gap-4 w-full mt-4 mb-2">
-          {/* Espace vide */}
           <div className="hidden sm:block sm:w-20 shrink-0"></div>
           
           <div 
@@ -640,7 +674,18 @@ def run():
                {(cellType === 'raw' || isEditingContent) && (
                  isMonacoReady ? (
                    <div className="border border-gray-200 dark:border-[#3c3c3c] rounded overflow-hidden">
-                     <MonacoEditor language={cellType === 'markdown' || cellType === 'heading' ? 'markdown' : 'plaintext'} value={localCode} onChange={handleChange} onFocus={() => setIsFocused(true)} onBlur={() => setIsFocused(false)} onRun={handleRun} readOnly={enforceLock} isDark={isDark} />
+                     <MonacoEditor 
+                        cellId={cell.id}
+                        language={cellType === 'markdown' || cellType === 'heading' ? 'markdown' : 'plaintext'} 
+                        value={localCode} 
+                        onChangeCode={handleCodeChange} 
+                        onSilentUpdate={handleSilentUpdate}
+                        onFocus={() => setIsFocused(true)} 
+                        onBlur={() => setIsFocused(false)} 
+                        onRun={handleRun} 
+                        readOnly={enforceLock} 
+                        isDark={isDark} 
+                     />
                    </div>
                  ) : (
                    <div className="h-[100px] flex items-center justify-center text-gray-500 dark:text-slate-500">Chargement...</div>
@@ -662,7 +707,6 @@ def run():
       const [selectedCellId, setSelectedCellId] = useState(null);
       const [viewingUser, setViewingUser] = useState(null);
 
-      // Thème & Presse-papiers & Permissions
       const [isDark, setIsDark] = useState(true);
       const [themeColor, setThemeColor] = useState('indigo');
       const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -670,7 +714,6 @@ def run():
       const [isCodeModalOpen, setIsCodeModalOpen] = useState(false);
       const [codePermissions, setCodePermissions] = useState({ canUnlock: true, canCreate: true, canShare: true, canGenerateCode: true });
 
-      // Recherche et Auto-completion
       const [searchQuery, setSearchQuery] = useState('');
       const [shareUsername, setShareUsername] = useState('');
       const [showShareSuggestions, setShowShareSuggestions] = useState(false);
@@ -696,13 +739,13 @@ def run():
       const [historyPast, setHistoryPast] = useState([]);
       const [historyFuture, setHistoryFuture] = useState([]);
 
-      const lastSaveTimeRef = useRef(0);
       const fileInputRef = useRef(null);
       const fileInputCurrentRef = useRef(null);
       const cellRunRefs = useRef({});
 
       const { pyodide, isPyodideLoading } = usePyodide();
       const isMonacoReady = useMonaco();
+      const socketRef = useRef(null);
 
       useEffect(() => {
         let uid = localStorage.getItem('collab_notebook_uid');
@@ -720,12 +763,10 @@ def run():
         document.documentElement.className = isDark ? 'dark' : '';
         const themeClass = themeColor !== 'indigo' ? `theme-${themeColor}` : '';
         document.body.className = `bg-gray-50 dark:bg-[#1e1e1e] text-slate-900 dark:text-[#cccccc] m-0 p-0 transition-colors duration-200 ${themeClass}`;
-        
         localStorage.setItem('collab_theme', isDark ? 'dark' : 'light');
         localStorage.setItem('collab_color', themeColor);
       }, [isDark, themeColor]);
 
-      // GESTION DE L'OUVERTURE DEPUIS LE PANEL
       useEffect(() => {
         const forceOpen = localStorage.getItem('collab_open_nb');
         if (forceOpen && serverData.notebooks?.some(n => n.id === forceOpen)) {
@@ -734,7 +775,43 @@ def run():
         }
       }, [serverData.notebooks]);
 
-      const socketRef = useRef(null);
+      // --- LE REDUCER LOCAL ET WEBSOCKET (LE COEUR DU FIX) ---
+      const applyActionToState = (state, action) => {
+          const next = { ...state };
+          switch(action.type) {
+              case 'ADD_CELL': next.cells = [...(next.cells||[]), action.payload]; break;
+              case 'DELETE_CELL': next.cells = (next.cells||[]).filter(c => c.id !== action.payload.cellId); break;
+              case 'UPDATE_CELL': next.cells = (next.cells||[]).map(c => c.id === action.payload.cellId ? { ...c, ...action.payload.data } : c); break;
+              case 'UPDATE_CELLS':
+                  let updatedCells = [...(next.cells||[])];
+                  action.payload.forEach(update => { updatedCells = updatedCells.map(c => c.id === update.cellId ? { ...c, ...update.data } : c); });
+                  next.cells = updatedCells; break;
+              case 'ADD_NOTEBOOK': next.notebooks = [...(next.notebooks||[]), action.payload]; break;
+              case 'UPDATE_NOTEBOOK': next.notebooks = (next.notebooks||[]).map(n => n.id === action.payload.notebookId ? { ...n, ...action.payload.data } : n); break;
+              case 'DELETE_NOTEBOOK':
+                  next.notebooks = (next.notebooks||[]).filter(n => n.id !== action.payload.notebookId);
+                  next.cells = (next.cells||[]).filter(c => c.notebookId !== action.payload.notebookId); break;
+              case 'ADD_USER': next.users = [...(next.users||[]), action.payload]; break;
+              case 'UPDATE_USER': next.users = (next.users||[]).map(u => u.id === action.payload.userId ? { ...u, ...action.payload.data } : u); break;
+          }
+          localStorage.setItem('collab_local_db', JSON.stringify(next));
+          return next;
+      };
+
+      const dispatchServerAction = (action) => {
+          setServerData(prev => applyActionToState(prev, action)); // Optmistic UI
+          if (socketRef.current) socketRef.current.emit('action', action); // Server sync
+      };
+
+      // Pour les très gros chargements (Historique, Import...) on garde la méthode forte
+      const updateServerFullSync = (mutationFn) => {
+        setServerData(prevData => {
+          const newData = mutationFn(prevData);
+          if (socketRef.current) socketRef.current.emit('update_data', newData);
+          localStorage.setItem('collab_local_db', JSON.stringify(newData)); 
+          return newData; 
+        });
+      };
 
       useEffect(() => {
         if (typeof window.io === 'function') {
@@ -745,7 +822,18 @@ def run():
             localStorage.setItem('collab_local_db', JSON.stringify(newData));
           });
 
-          // Écoute dédiée super-légère pour les curseurs des autres !
+          // Réception des actions structurelles (sans écraser le reste !)
+          socketRef.current.on('action_received', (action) => {
+              setServerData(prev => applyActionToState(prev, action));
+          });
+
+          // Réception chirurgicale de Monaco
+          socketRef.current.on('remote_cell_edits', ({ cellId, code, changes }) => {
+              window.dispatchEvent(new CustomEvent(`apply_monaco_edits_${cellId}`, { detail: { code, changes } }));
+              // Mise à jour de l'état global React sans redéclencher un emit
+              setServerData(prev => applyActionToState(prev, { type: 'UPDATE_CELL', payload: { cellId, data: { code } } }));
+          });
+
           socketRef.current.on('cursor_updated', (c) => {
             setRemoteCursorsState(prev => ({ ...prev, [c.userId]: c }));
           });
@@ -771,9 +859,7 @@ def run():
             console.warn("Environnement statique détecté, API serveur ignorée.");
         }
 
-        return () => {
-          if (socketRef.current) socketRef.current.disconnect();
-        };
+        return () => { if (socketRef.current) socketRef.current.disconnect(); };
       }, []);
 
       // Nettoyage des curseurs obsolètes
@@ -784,10 +870,7 @@ def run():
                   let changed = false;
                   const next = { ...prev };
                   for (const uid in next) {
-                      if (now - next[uid].timestamp > 10000) {
-                          delete next[uid];
-                          changed = true;
-                      }
+                      if (now - next[uid].timestamp > 10000) { delete next[uid]; changed = true; }
                   }
                   return changed ? next : prev;
               });
@@ -814,18 +897,6 @@ def run():
         return () => window.removeEventListener('keydown', handleKeyDown);
       }, []);
 
-      const updateServer = (mutationFn) => {
-        setServerData(prevData => {
-          const newData = mutationFn(prevData);
-          if (socketRef.current) {
-            socketRef.current.emit('update_data', newData);
-          }
-          localStorage.setItem('collab_local_db', JSON.stringify(newData)); 
-          return newData; 
-        });
-      };
-
-      // Gestion des Cursors locaux émis sur le canal dédié
       const handleUpdateCursor = (cellId, positionInfo) => {
           if (!user || !currentNbId || !userData) return;
           const cursorData = {
@@ -838,12 +909,10 @@ def run():
               color: getUserColor(user.uid),
               timestamp: Date.now()
           };
-          if (socketRef.current) {
-              socketRef.current.emit('cursor_moved', cursorData);
-          }
+          if (socketRef.current) socketRef.current.emit('cursor_moved', cursorData);
       };
 
-      // --- LOGIQUE HISTORIQUE (Undo / Redo) ---
+      // --- LOGIQUE HISTORIQUE (Undo / Redo) -> Utilise la méthode forte car on veut reset la map ---
       const handleSnapshot = () => {
         if (!currentNbId) return;
         setServerData(currentData => {
@@ -860,7 +929,7 @@ def run():
 
       const handleUndo = () => {
         if (historyPast.length === 0 || !currentNbId) return;
-        setServerData(currentData => {
+        updateServerFullSync(currentData => {
            const previousStateStr = historyPast[historyPast.length - 1];
            const previousCells = JSON.parse(previousStateStr);
            
@@ -869,19 +938,14 @@ def run():
            setHistoryPast(p => p.slice(0, -1));
            
            const otherCells = (currentData.cells || []).filter(c => c.notebookId !== currentNbId);
-           const newData = { ...currentData, cells: [...otherCells, ...previousCells] };
-           
-           lastSaveTimeRef.current = Date.now();
-           try{ fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newData) }).catch(() => {}); }catch(e){}
-           localStorage.setItem('collab_local_db', JSON.stringify(newData));
-           return newData;
+           return { ...currentData, cells: [...otherCells, ...previousCells] };
         });
         setSelectedCellId(null);
       };
 
       const handleRedo = () => {
         if (historyFuture.length === 0 || !currentNbId) return;
-        setServerData(currentData => {
+        updateServerFullSync(currentData => {
            const nextStateStr = historyFuture[0];
            const nextCells = JSON.parse(nextStateStr);
            
@@ -890,12 +954,7 @@ def run():
            setHistoryFuture(f => f.slice(1));
            
            const otherCells = (currentData.cells || []).filter(c => c.notebookId !== currentNbId);
-           const newData = { ...currentData, cells: [...otherCells, ...nextCells] };
-           
-           lastSaveTimeRef.current = Date.now();
-           try{ fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newData) }).catch(() => {}); }catch(e){}
-           localStorage.setItem('collab_local_db', JSON.stringify(newData));
-           return newData;
+           return { ...currentData, cells: [...otherCells, ...nextCells] };
         });
         setSelectedCellId(null);
       };
@@ -907,10 +966,7 @@ def run():
         if (!trimmedUsername || !inputPassword) return;
 
         if (authMode === 'register') {
-          if (inputPassword !== inputPasswordConfirm) {
-            alert("Les mots de passe ne correspondent pas !");
-            return;
-          }
+          if (inputPassword !== inputPasswordConfirm) { alert("Les mots de passe ne correspondent pas !"); return; }
         }
 
         const hashed = await hashPassword(inputPassword);
@@ -920,17 +976,15 @@ def run():
             alert("Ce pseudo est déjà pris !"); return; 
           }
           const newUid = generateUUID();
-          updateServer(data => {
-            const newUsers = data.users ? data.users.filter(u => u.id !== newUid) : [];
-            return { ...data, users: [...newUsers, { id: newUid, username: trimmedUsername, password: hashed, email: '', description: '', role: 'eleve' }] };
+          dispatchServerAction({
+              type: 'ADD_USER',
+              payload: { id: newUid, username: trimmedUsername, password: hashed, email: '', description: '', role: 'eleve' }
           });
           localStorage.setItem('collab_notebook_uid', newUid);
           setUser({ uid: newUid });
         } else {
           const existingUser = (serverData.users || []).find(u => u.username.toLowerCase() === trimmedUsername.toLowerCase());
-          if (!existingUser || existingUser.password !== hashed) {
-            alert("Identifiants incorrects !"); return;
-          }
+          if (!existingUser || existingUser.password !== hashed) { alert("Identifiants incorrects !"); return; }
           localStorage.setItem('collab_notebook_uid', existingUser.id);
           setUser({ uid: existingUser.id });
         }
@@ -951,25 +1005,17 @@ def run():
 
         let hashedPw = userData.password;
         if (profileForm.newPassword) {
-            if (!profileForm.oldPassword) {
-                alert("Veuillez entrer votre ancien mot de passe pour le modifier.");
-                return;
-            }
+            if (!profileForm.oldPassword) { alert("Veuillez entrer votre ancien mot de passe pour le modifier."); return; }
             const oldHashed = await hashPassword(profileForm.oldPassword);
-            if (oldHashed !== userData.password) {
-                alert("L'ancien mot de passe est incorrect !");
-                return;
-            }
+            if (oldHashed !== userData.password) { alert("L'ancien mot de passe est incorrect !"); return; }
             hashedPw = await hashPassword(profileForm.newPassword);
         }
 
-        updateServer(data => {
+        updateServerFullSync(data => {
             if (trimmedUsername !== userData.username && (data.users || []).some(u => u.id !== user.uid && u.username.toLowerCase() === trimmedUsername.toLowerCase())) {
                 alert("Ce pseudo est déjà pris !"); return data; 
             }
-            const newUsers = (data.users || []).map(u => u.id === user.uid ? {
-                ...u, username: trimmedUsername, password: hashedPw, email: profileForm.email, description: profileForm.description
-            } : u);
+            const newUsers = (data.users || []).map(u => u.id === user.uid ? { ...u, username: trimmedUsername, password: hashedPw, email: profileForm.email, description: profileForm.description } : u);
             let newNotebooks = (data.notebooks || []);
             if (trimmedUsername !== userData.username) {
                 newNotebooks = newNotebooks.map(nb => {
@@ -987,22 +1033,18 @@ def run():
       };
 
       const handleCreateNotebook = () => {
-        try {
-            const myData = (serverData.users || []).find(u => u.id === user.uid);
-            if (!user || !myData) return;
-            const inputTitle = prompt("Nom du notebook ?");
-            if (inputTitle === null) return; // Si annulé, on ne crée rien !
-            const title = inputTitle.trim() || "Nouveau Notebook";
-            const newNbId = generateUUID();
-            updateServer(data => {
-              const newNb = { id: newNbId, title, ownerUid: user.uid, ownerUsername: myData.username, sharedWith: [], createdAt: new Date().toISOString() };
-              return { ...data, notebooks: [...(data.notebooks || []), newNb], cells: data.cells || [] };
-            });
-            setCurrentNbId(newNbId);
-            setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null);
-        } catch(e) {
-            console.error("Erreur à la création :", e);
-        }
+        const myData = (serverData.users || []).find(u => u.id === user.uid);
+        if (!user || !myData) return;
+        const inputTitle = prompt("Nom du notebook ?");
+        if (inputTitle === null) return; 
+        const title = inputTitle.trim() || "Nouveau Notebook";
+        const newNbId = generateUUID();
+        dispatchServerAction({
+            type: 'ADD_NOTEBOOK',
+            payload: { id: newNbId, title, ownerUid: user.uid, ownerUsername: myData.username, sharedWith: [], createdAt: new Date().toISOString() }
+        });
+        setCurrentNbId(newNbId);
+        setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null);
       };
 
       const handleJoinByCode = (e) => {
@@ -1011,22 +1053,12 @@ def run():
         if (!code) return;
 
         if (code === '1435') {
-            updateServer(data => ({
-                ...data,
-                users: (data.users || []).map(u => u.id === user.uid ? { ...u, role: 'admin' } : u)
-            }));
-            alert("🔐 Succès : Vous avez maintenant les privilèges Administrateur !");
-            setJoinCode('');
-            return;
+            dispatchServerAction({ type: 'UPDATE_USER', payload: { userId: user.uid, data: { role: 'admin' } } });
+            alert("🔐 Succès : Privilèges Administrateur !"); setJoinCode(''); return;
         }
         if (code === 'PROFCOLLAB') {
-            updateServer(data => ({
-                ...data,
-                users: (data.users || []).map(u => u.id === user.uid ? { ...u, role: 'prof' } : u)
-            }));
-            alert("🎓 Succès : Vous avez maintenant les privilèges Professeur !");
-            setJoinCode('');
-            return;
+            dispatchServerAction({ type: 'UPDATE_USER', payload: { userId: user.uid, data: { role: 'prof' } } });
+            alert("🎓 Succès : Privilèges Professeur !"); setJoinCode(''); return;
         }
 
         const templateNb = (serverData.notebooks || []).find(n => n.accessCode === code);
@@ -1035,21 +1067,13 @@ def run():
         const myData = (serverData.users || []).find(u => u.id === user.uid);
         const newNbId = generateUUID();
         const templateCells = (serverData.cells || []).filter(c => c.notebookId === templateNb.id);
-        const newCells = templateCells.map(c => ({
-          ...c, id: generateUUID(), notebookId: newNbId, output: '', status: 'idle', locked: c.locked
-        }));
+        const newCells = templateCells.map(c => ({ ...c, id: generateUUID(), notebookId: newNbId, output: '', status: 'idle', locked: c.locked }));
 
-        updateServer(data => {
+        updateServerFullSync(data => {
           const newNb = { 
-            id: newNbId, 
-            title: `Exercice : ${templateNb.title}`, 
-            ownerUid: user.uid, 
-            ownerUsername: myData.username, 
-            sharedWith: [], 
-            createdAt: new Date().toISOString(),
+            id: newNbId, title: `Exercice : ${templateNb.title}`, ownerUid: user.uid, ownerUsername: myData.username, sharedWith: [], createdAt: new Date().toISOString(),
             permissions: templateNb.studentPermissions || { canUnlock: true, canCreate: true, canShare: true, canGenerateCode: true },
-            templateSourceId: templateNb.id,
-            templateOwnerUid: templateNb.ownerUid
+            templateSourceId: templateNb.id, templateOwnerUid: templateNb.ownerUid
           };
           return { ...data, notebooks: [...(data.notebooks || []), newNb], cells: [...(data.cells || []), ...newCells] };
         });
@@ -1068,26 +1092,17 @@ def run():
       const handleGenerateAccessCode = () => {
         if (!currentNbId) return;
         let code = Math.random().toString(36).substring(2, 8).toUpperCase();
-        updateServer(data => ({ 
-            ...data, 
-            notebooks: (data.notebooks || []).map(n => n.id === currentNbId ? { ...n, accessCode: code, studentPermissions: codePermissions } : n) 
-        }));
+        dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { accessCode: code, studentPermissions: codePermissions } } });
       };
 
       const handleDisableAccessCode = () => {
           if (!currentNbId) return;
-          updateServer(data => ({
-              ...data,
-              notebooks: (data.notebooks || []).map(n => n.id === currentNbId ? { ...n, accessCode: null } : n)
-          }));
+          dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { accessCode: null } } });
       };
 
       const handleSavePermissions = () => {
           if (!currentNbId) return;
-          updateServer(data => ({
-              ...data,
-              notebooks: (data.notebooks || []).map(n => n.id === currentNbId ? { ...n, studentPermissions: codePermissions } : n)
-          }));
+          dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { studentPermissions: codePermissions } } });
           setIsCodeModalOpen(false);
       };
 
@@ -1122,7 +1137,7 @@ def run():
             const title = file.name.replace(/\.ipynb$/i, '');
             const importedCells = processImportedFile(event.target.result, title, newNbId);
 
-            updateServer(data => {
+            updateServerFullSync(data => {
               const newNb = { id: newNbId, title: title, ownerUid: user.uid, ownerUsername: myData.username, sharedWith: [], createdAt: new Date().toISOString() };
               return { ...data, notebooks: [...(data.notebooks || []), newNb], cells: [...(data.cells || []), ...importedCells] };
             });
@@ -1140,13 +1155,12 @@ def run():
         if (!window.confirm("Remplacer tout le contenu actuel par le fichier importé ?")) { e.target.value = null; return; }
         
         handleSnapshot(); 
-
         const reader = new FileReader();
         reader.onload = (event) => {
           try {
             const title = file.name.replace(/\.ipynb$/i, '');
             const importedCells = processImportedFile(event.target.result, title, currentNbId);
-            updateServer(data => {
+            updateServerFullSync(data => {
               const filteredCells = (data.cells || []).filter(c => c.notebookId !== currentNbId);
               const updatedNotebooks = (data.notebooks || []).map(n => n.id === currentNbId ? { ...n, title: title } : n);
               return { ...data, notebooks: updatedNotebooks, cells: [...filteredCells, ...importedCells] };
@@ -1164,25 +1178,16 @@ def run():
         const userData = (serverData.users || []).find(u => u.id === user.uid);
         const hasAdminRights = userData?.role === 'admin' || userData?.role === 'prof';
         if (activeNotebook?.ownerUid !== user.uid && !hasAdminRights) { alert("Seul le propriétaire peut renommer."); setIsEditingTitle(false); return; }
-        updateServer(data => ({ ...data, notebooks: (data.notebooks || []).map(n => n.id === currentNbId ? { ...n, title: newTitle.trim() } : n) }));
+        
+        dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { title: newTitle.trim() } } });
         setIsEditingTitle(false);
       };
 
       const handleDeleteNotebook = (e, nbId) => {
-        if (e) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
+        if (e) { e.preventDefault(); e.stopPropagation(); }
         if (window.confirm("Êtes-vous sûr de vouloir supprimer définitivement ce notebook ?")) {
-          updateServer(data => ({ 
-            ...data, 
-            notebooks: (data.notebooks || []).filter(n => n.id !== nbId), 
-            cells: (data.cells || []).filter(c => c.notebookId !== nbId) 
-          }));
-          if (currentNbId === nbId) {
-             setCurrentNbId(null); setSelectedCellId(null);
-             setHistoryPast([]); setHistoryFuture([]);
-          }
+          dispatchServerAction({ type: 'DELETE_NOTEBOOK', payload: { notebookId: nbId } });
+          if (currentNbId === nbId) { setCurrentNbId(null); setSelectedCellId(null); setHistoryPast([]); setHistoryFuture([]); }
         }
       };
 
@@ -1192,17 +1197,19 @@ def run():
         const targetUser = (serverData.users || []).find(u => u.username.toLowerCase() === shareUsername.toLowerCase());
         if (!targetUser) { alert("Utilisateur introuvable !"); return; }
         
-        updateServer(data => ({
-            ...data, notebooks: (data.notebooks || []).map(n => (n.id === currentNbId && !n.sharedWith.includes(targetUser.username)) ? { ...n, sharedWith: [...n.sharedWith, targetUser.username] } : n)
-        }));
+        const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId);
+        if (activeNotebook && !activeNotebook.sharedWith.includes(targetUser.username)) {
+            dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { sharedWith: [...activeNotebook.sharedWith, targetUser.username] } } });
+        }
         setShareUsername('');
       };
 
       const handleRemoveShare = (usernameToRemove) => {
         if (!currentNbId) return;
-        updateServer(data => ({
-            ...data, notebooks: (data.notebooks || []).map(n => n.id === currentNbId ? { ...n, sharedWith: n.sharedWith.filter(u => u !== usernameToRemove) } : n)
-        }));
+        const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId);
+        if (activeNotebook) {
+            dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { sharedWith: activeNotebook.sharedWith.filter(u => u !== usernameToRemove) } } });
+        }
       };
 
       const handleRestartKernel = async () => {
@@ -1234,17 +1241,16 @@ for key in list(globals().keys()):
         else delete cellRunRefs.current[id];
       };
 
-      // --- Actions Cellules (Global Toolbar) ---
+      // --- Actions Cellules ---
       const handleAddCell = () => {
         if (!user || !currentNbId) return;
         handleSnapshot();
         const newCellId = generateUUID();
-        updateServer(data => {
-          const nbCells = (data.cells || []).filter(c => c.notebookId === currentNbId);
-          const newOrder = nbCells.length > 0 ? Math.max(...nbCells.map(c => c.order)) + 10 : 10;
-          const newCell = { id: newCellId, notebookId: currentNbId, code: '', type: 'code', output: '', status: 'idle', order: newOrder, locked: false };
-          return { ...data, cells: [...(data.cells || []), newCell] };
-        });
+        const nbCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId);
+        const newOrder = nbCells.length > 0 ? Math.max(...nbCells.map(c => c.order)) + 10 : 10;
+        const newCell = { id: newCellId, notebookId: currentNbId, code: '', type: 'code', output: '', status: 'idle', order: newOrder, locked: false };
+        
+        dispatchServerAction({ type: 'ADD_CELL', payload: newCell });
         setSelectedCellId(newCellId);
       };
 
@@ -1259,42 +1265,30 @@ for key in list(globals().keys()):
         if (!targetCell) return;
 
         handleSnapshot();
-        updateServer(data => ({
-          ...data, cells: (data.cells || []).map(c => {
-            if (c.id === cellId) return { ...c, order: targetCell.order };
-            if (c.id === targetCell.id) return { ...c, order: nbCells[index].order };
-            return c;
-          })
-        }));
+        dispatchServerAction({ type: 'UPDATE_CELLS', payload: [
+            { cellId, data: { order: targetCell.order } },
+            { cellId: targetCell.id, data: { order: nbCells[index].order } }
+        ]});
       };
 
       const handleDeleteCell = (cellId) => {
         handleSnapshot();
-        updateServer(data => ({ ...data, cells: (data.cells || []).filter(c => c.id !== cellId) }));
+        dispatchServerAction({ type: 'DELETE_CELL', payload: { cellId } });
         if (selectedCellId === cellId) setSelectedCellId(null);
       };
 
-      const handleUpdateCellType = (cellId, newType) => {
-         handleSnapshot();
-         updateServer(data => ({ ...data, cells: (data.cells || []).map(c => c.id === cellId ? { ...c, type: newType } : c) }));
+      const handleUpdateCellProperty = (cellId, dataToUpdate) => {
+         dispatchServerAction({ type: 'UPDATE_CELL', payload: { cellId, data: dataToUpdate } });
       };
 
-      const handleToggleLock = (cellId, currentLockState) => {
-         handleSnapshot();
-         updateServer(data => ({ ...data, cells: (data.cells || []).map(c => c.id === cellId ? { ...c, locked: !currentLockState } : c) }));
-      };
-
-      const handleClearSelectedOutput = (cellId) => {
-         handleSnapshot();
-         if (window.activeP5Instances && window.activeP5Instances[`p5-target-${cellId}`]) {
-            window.activeP5Instances[`p5-target-${cellId}`].remove();
-            delete window.activeP5Instances[`p5-target-${cellId}`];
+      // NOUVEAU: MÀJ du code ultra-rapide et chirurgicale !
+      const handleUpdateCellCode = (cellId, fullCode, changes) => {
+         // Applique localement (UI optimiste)
+         setServerData(prev => applyActionToState(prev, { type: 'UPDATE_CELL', payload: { cellId, data: { code: fullCode } } }));
+         // Émet sur le canal dédié
+         if (socketRef.current) {
+            socketRef.current.emit('cell_edit_operations', { cellId, code: fullCode, changes });
          }
-         updateServer(data => ({ ...data, cells: (data.cells || []).map(c => c.id === cellId ? { ...c, output: '', status: 'idle' } : c) }));
-      };
-
-      const handleUpdateCell = (cellId, dataToUpdate) => {
-        updateServer(data => ({ ...data, cells: (data.cells || []).map(c => c.id === cellId ? { ...c, ...dataToUpdate } : c) }));
       };
 
       const handleDownload = () => {
@@ -1314,7 +1308,6 @@ for key in list(globals().keys()):
         URL.revokeObjectURL(url);
       };
 
-      // --- Copier / Couper / Coller ---
       const handleCopyCell = () => {
           const selectedCell = (serverData.cells || []).find(c => c.id === selectedCellId);
           if (!selectedCell) return;
@@ -1337,24 +1330,19 @@ for key in list(globals().keys()):
           if (!clipboardCell || !currentNbId) return;
           handleSnapshot();
           const newCellId = generateUUID();
-          updateServer(data => {
-              const nbCells = (data.cells || []).filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
-              let insertOrder = 10;
-              if (selectedCellId) {
-                  const selIndex = nbCells.findIndex(c => c.id === selectedCellId);
-                  if (selIndex !== -1) {
-                      if (selIndex === nbCells.length - 1) {
-                          insertOrder = nbCells[selIndex].order + 10;
-                      } else {
-                          insertOrder = (nbCells[selIndex].order + nbCells[selIndex+1].order) / 2;
-                      }
-                  }
-              } else if (nbCells.length > 0) {
-                  insertOrder = nbCells[nbCells.length - 1].order + 10;
+          const nbCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
+          let insertOrder = 10;
+          if (selectedCellId) {
+              const selIndex = nbCells.findIndex(c => c.id === selectedCellId);
+              if (selIndex !== -1) {
+                  if (selIndex === nbCells.length - 1) { insertOrder = nbCells[selIndex].order + 10; } 
+                  else { insertOrder = (nbCells[selIndex].order + nbCells[selIndex+1].order) / 2; }
               }
-              const newCell = { ...clipboardCell, id: newCellId, notebookId: currentNbId, order: insertOrder };
-              return { ...data, cells: [...(data.cells || []), newCell] };
-          });
+          } else if (nbCells.length > 0) {
+              insertOrder = nbCells[nbCells.length - 1].order + 10;
+          }
+          const newCell = { ...clipboardCell, id: newCellId, notebookId: currentNbId, order: insertOrder };
+          dispatchServerAction({ type: 'ADD_CELL', payload: newCell });
           setSelectedCellId(newCellId);
       };
 
@@ -1367,10 +1355,10 @@ for key in list(globals().keys()):
 
       const hasAdminRights = userData?.role === 'admin' || userData?.role === 'prof';
       const isCopiedNotebook = !!activeNotebook?.templateSourceId;
-      const canShareNotebook = hasAdminRights || !isCopiedNotebook || activeNotebook.permissions?.canShare !== false;
-      const canGenCodeNotebook = hasAdminRights || !isCopiedNotebook || activeNotebook.permissions?.canGenerateCode !== false;
-      const canCreateCellsNotebook = hasAdminRights || !isCopiedNotebook || activeNotebook.permissions?.canCreate !== false;
-      const canUnlockCellsNotebook = hasAdminRights || !isCopiedNotebook || activeNotebook.permissions?.canUnlock !== false;
+      const canShareNotebook = hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canShare !== false;
+      const canGenCodeNotebook = hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canGenerateCode !== false;
+      const canCreateCellsNotebook = hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canCreate !== false;
+      const canUnlockCellsNotebook = hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canUnlock !== false;
 
       const selectedCell = activeCells.find(c => c.id === selectedCellId);
       const isSelectedCellFirst = activeCells[0]?.id === selectedCellId;
@@ -1434,7 +1422,6 @@ for key in list(globals().keys()):
           <div className="min-h-screen p-4 md:p-8 transition-colors relative">
             <div className="max-w-5xl mx-auto">
               
-              {/* HEADER ACCUEIL RESTAURE */}
               <header className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 border-b border-gray-200 dark:border-slate-800 pb-6 gap-4 relative z-50">
                 <div className="flex items-center gap-3">
                   <BookOpen size={28} className="text-primary-500" />
@@ -1559,7 +1546,6 @@ for key in list(globals().keys()):
                 </section>
               </div>
             </div>
-            {/* Modal inclus ici pour qu'il soit bien hors de la pile */}
             {isProfileOpen && (
               <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[99999] p-4">
                 <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-md shadow-2xl relative">
@@ -1627,10 +1613,7 @@ for key in list(globals().keys()):
         <div className="min-h-screen transition-colors flex flex-col">
           <style>{cursorStyles}</style>
           
-          {/* ZONE DE NAVIGATION TOP ET BARRE GLOBALE - Sticky */}
           <div className="sticky top-0 z-[1000] flex flex-col shadow-md">
-            
-            {/* Barre principale */}
             <nav className="bg-white dark:bg-[#161b22] border-b border-gray-200 dark:border-slate-700/50 px-2 sm:px-4 py-2 flex flex-wrap gap-2 items-center justify-between">
               <div className="flex items-center gap-2 sm:gap-4 min-w-0">
                 <button onClick={() => {setCurrentNbId(null); setSelectedCellId(null);}} className="p-1 sm:p-2 flex-shrink-0 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors"><ArrowLeft size={20} /></button>
@@ -1646,7 +1629,6 @@ for key in list(globals().keys()):
                   )}
                 </div>
                 
-                {/* HISTORIQUE UNDO / REDO */}
                 <div className="flex items-center border-l border-gray-200 dark:border-slate-700 ml-2 pl-2">
                   <button id="btn-undo" onClick={handleUndo} disabled={historyPast.length === 0} className="p-1 sm:p-1.5 text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent rounded transition-colors" title="Annuler l'action globale (Ctrl+Z)"><RotateCcw size={16} /></button>
                   <button id="btn-redo" onClick={handleRedo} disabled={historyFuture.length === 0} className="p-1 sm:p-1.5 text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent rounded transition-colors" title="Rétablir l'action globale (Ctrl+Y)"><RotateCw size={16} /></button>
@@ -1654,7 +1636,6 @@ for key in list(globals().keys()):
               </div>
               
               <div className="flex items-center gap-2 sm:gap-4 overflow-x-auto no-scrollbar pb-1 sm:pb-0 w-full sm:w-auto">
-                
                 <div className="flex flex-shrink-0 items-center gap-1 border-r border-gray-200 dark:border-slate-700 pr-2 sm:pr-4 mr-1 sm:mr-2">
                    <button onClick={handleRestartKernel} className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-slate-300 hover:text-red-500 transition-colors px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800" title="Redémarrer le noyau">
                       <Terminal size={14} /> <span className="hidden lg:inline">Noyau</span>
@@ -1669,7 +1650,6 @@ for key in list(globals().keys()):
                 </div>
 
                 <div className="flex flex-shrink-0 gap-1 sm:gap-2 relative items-center">
-                  
                   {(activeNotebook?.ownerUid === user?.uid || hasAdminRights) && (
                      <>
                        <input type="file" accept=".ipynb" className="hidden" ref={fileInputCurrentRef} onChange={handleImportIntoCurrentNotebook} />
@@ -1690,12 +1670,10 @@ for key in list(globals().keys()):
                   <div className="flex items-center border-l border-gray-200 dark:border-slate-700 pl-2 ml-2">
                      <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Se déconnecter"><LogOut size={20}/></button>
                   </div>
-
                 </div>
               </div>
             </nav>
 
-            {/* Barre secondaire GLOBALE : Actions sur la cellule sélectionnée */}
             {selectedCell ? (
                <div className="bg-gray-100 dark:bg-[#1e1e1e] border-b border-gray-200 dark:border-slate-800 px-2 sm:px-4 py-2 flex items-center gap-2 overflow-x-auto no-scrollbar shadow-inner">
                  <span className="text-[10px] font-bold text-primary-500 whitespace-nowrap hidden sm:block tracking-widest uppercase">Édition</span>
@@ -1704,7 +1682,7 @@ for key in list(globals().keys()):
                  <select
                     value={selectedCell.type || 'code'}
                     disabled={selectedCell.locked && !hasAdminRights}
-                    onChange={(e) => handleUpdateCellType(selectedCell.id, e.target.value)}
+                    onChange={(e) => handleUpdateCellProperty(selectedCell.id, { type: e.target.value })}
                     className="flex-shrink-0 bg-white dark:bg-[#2d2d2d] border border-gray-300 dark:border-slate-700 text-xs sm:text-sm text-gray-700 dark:text-slate-200 rounded px-2 py-1 outline-none focus:border-primary-500 disabled:opacity-50 cursor-pointer"
                  >
                     <option value="code">Code Python</option>
@@ -1715,11 +1693,11 @@ for key in list(globals().keys()):
 
                  {(selectedCell.type === 'markdown' || selectedCell.type === 'heading') && (
                     <div className="flex flex-shrink-0 items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 ml-2">
-                       <button onClick={() => handleUpdateCell(selectedCell.id, { align: 'left' })} className={`p-1 sm:p-1.5 ${selectedCell.align === 'left' || !selectedCell.align ? 'text-primary-500 bg-gray-100 dark:bg-[#3c3c3c]' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'} rounded-l transition-colors`} title="Aligner à gauche"><AlignLeft size={14} /></button>
+                       <button onClick={() => handleUpdateCellProperty(selectedCell.id, { align: 'left' })} className={`p-1 sm:p-1.5 ${selectedCell.align === 'left' || !selectedCell.align ? 'text-primary-500 bg-gray-100 dark:bg-[#3c3c3c]' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'} rounded-l transition-colors`} title="Aligner à gauche"><AlignLeft size={14} /></button>
                        <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
-                       <button onClick={() => handleUpdateCell(selectedCell.id, { align: 'center' })} className={`p-1 sm:p-1.5 ${selectedCell.align === 'center' ? 'text-primary-500 bg-gray-100 dark:bg-[#3c3c3c]' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'} transition-colors`} title="Centrer"><AlignCenter size={14} /></button>
+                       <button onClick={() => handleUpdateCellProperty(selectedCell.id, { align: 'center' })} className={`p-1 sm:p-1.5 ${selectedCell.align === 'center' ? 'text-primary-500 bg-gray-100 dark:bg-[#3c3c3c]' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'} transition-colors`} title="Centrer"><AlignCenter size={14} /></button>
                        <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
-                       <button onClick={() => handleUpdateCell(selectedCell.id, { align: 'right' })} className={`p-1 sm:p-1.5 ${selectedCell.align === 'right' ? 'text-primary-500 bg-gray-100 dark:bg-[#3c3c3c]' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'} rounded-r transition-colors`} title="Aligner à droite"><AlignRight size={14} /></button>
+                       <button onClick={() => handleUpdateCellProperty(selectedCell.id, { align: 'right' })} className={`p-1 sm:p-1.5 ${selectedCell.align === 'right' ? 'text-primary-500 bg-gray-100 dark:bg-[#3c3c3c]' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'} rounded-r transition-colors`} title="Aligner à droite"><AlignRight size={14} /></button>
                     </div>
                  )}
 
@@ -1729,7 +1707,6 @@ for key in list(globals().keys()):
                    <button onClick={() => handleMoveCell(selectedCell.id, 'down')} disabled={(isSelectedCellLast || selectedCell.locked) && !hasAdminRights} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Descendre"><ArrowDown size={14} /></button>
                  </div>
 
-                 {/* NOUVEAU : Copier, Couper, Coller */}
                  <div className="flex flex-shrink-0 items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 ml-2">
                    <button onClick={handleCopyCell} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white rounded-l hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Copier la cellule"><CopyIcon size={14} /></button>
                    <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
@@ -1740,12 +1717,12 @@ for key in list(globals().keys()):
 
                  <div className="flex flex-shrink-0 items-center gap-2 ml-auto">
                    {(canUnlockCellsNotebook || hasAdminRights) && (activeNotebook?.ownerUid === user?.uid || hasAdminRights) && (
-                     <button onClick={() => handleToggleLock(selectedCell.id, selectedCell.locked)} className={`flex items-center gap-1.5 px-2 py-1.5 rounded transition-colors text-xs font-medium ${selectedCell.locked ? 'text-amber-600 bg-amber-100 dark:text-amber-400 dark:bg-amber-900/30' : 'text-gray-600 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-[#3c3c3c]'}`} title={selectedCell.locked ? "Déverrouiller" : "Verrouiller"}>
+                     <button onClick={() => handleUpdateCellProperty(selectedCell.id, { locked: !selectedCell.locked })} className={`flex items-center gap-1.5 px-2 py-1.5 rounded transition-colors text-xs font-medium ${selectedCell.locked ? 'text-amber-600 bg-amber-100 dark:text-amber-400 dark:bg-amber-900/30' : 'text-gray-600 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-[#3c3c3c]'}`} title={selectedCell.locked ? "Déverrouiller" : "Verrouiller"}>
                        {selectedCell.locked ? <Lock size={14} /> : <Unlock size={14} />} <span className="hidden sm:inline">{selectedCell.locked ? 'Verrouillé' : 'Libre'}</span>
                      </button>
                    )}
                    {selectedCell.type === 'code' && (
-                      <button onClick={() => handleClearSelectedOutput(selectedCell.id)} disabled={!selectedCell.output && selectedCell.status !== 'error'} className="flex items-center gap-1.5 px-2 py-1.5 text-gray-600 dark:text-slate-300 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-[#3c3c3c] disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Effacer la console">
+                      <button onClick={() => handleUpdateCellProperty(selectedCell.id, { output: '', status: 'idle' })} disabled={!selectedCell.output && selectedCell.status !== 'error'} className="flex items-center gap-1.5 px-2 py-1.5 text-gray-600 dark:text-slate-300 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-[#3c3c3c] disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Effacer la console">
                          <XCircle size={14} /> <span className="hidden sm:inline">Effacer console</span>
                       </button>
                    )}
@@ -1786,7 +1763,8 @@ for key in list(globals().keys()):
                     cell={cell} 
                     isSelected={selectedCellId === cell.id}
                     onSelect={setSelectedCellId}
-                    onUpdate={handleUpdateCell} 
+                    onUpdateProperty={handleUpdateCellProperty} 
+                    onUpdateCode={handleUpdateCellCode}
                     onUpdateCursor={handleUpdateCursor}
                     remoteCursors={remoteCursors}
                     pyodide={pyodide} 
@@ -1807,7 +1785,6 @@ for key in list(globals().keys()):
             )}
           </main>
 
-          {/* MODAL CODE NOTEBOOK & PERMISSIONS */}
           {isCodeModalOpen && activeNotebook && (
             <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[99999] p-4">
               <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-md shadow-2xl relative">
@@ -1860,7 +1837,6 @@ for key in list(globals().keys()):
             </div>
           )}
 
-          {/* MODAL DE PARTAGE */}
           {isSharing && activeNotebook && (
             <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[99999] p-4">
               <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-md shadow-2xl relative">
@@ -1917,29 +1893,6 @@ for key in list(globals().keys()):
                   <div className="text-center p-4 bg-gray-50 dark:bg-slate-800/50 rounded-lg border border-gray-200 dark:border-slate-700 border-dashed">
                     <p className="text-sm text-gray-500">Ce notebook n'est partagé avec personne pour le moment.</p>
                   </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* MODAL POUR VOIR UN AUTRE UTILISATEUR */}
-          {viewingUser && (
-            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[99999] p-4">
-              <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-sm shadow-2xl relative text-center">
-                <button onClick={() => setViewingUser(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
-                <div className="flex justify-center mb-4">
-                   <Avatar name={viewingUser.username} role={viewingUser.role} size={48} />
-                </div>
-                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">{viewingUser.username}</h2>
-                <div className="mb-4">
-                   <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${viewingUser.role === 'admin' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' : viewingUser.role === 'prof' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-primary-100 text-primary-600 dark:bg-primary-900/30 dark:text-primary-400'}`}>
-                     {viewingUser.role || 'eleve'}
-                   </span>
-                </div>
-                {viewingUser.description ? (
-                   <p className="text-gray-600 dark:text-slate-300 text-sm whitespace-pre-wrap bg-gray-50 dark:bg-slate-800 p-3 rounded-lg text-left">{viewingUser.description}</p>
-                ) : (
-                   <p className="text-gray-400 dark:text-slate-500 text-sm italic">Aucune description.</p>
                 )}
               </div>
             </div>
