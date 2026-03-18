@@ -24,7 +24,7 @@
     }
   </script>
 
-  <!-- Utilisation d'un CDN pour Socket.IO afin d'éviter l'erreur 404 (et window.io is not a function) -->
+  <!-- Utilisation d'un CDN pour Socket.IO afin d'éviter l'erreur 404 -->
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
   
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -76,7 +76,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useRef } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Play, Plus, Trash2, Loader2, Users, Terminal, Code2, CheckCircle2, ArrowLeft, Share2, BookOpen, User, Lock, Edit2, Download, ArrowUp, ArrowDown, XCircle, Upload, LogOut, Key, Unlock, X, RotateCcw, RotateCw, Image as ImageIcon, Settings, Moon, Sun, Type } from 'lucide-react';
+    import { Play, Plus, Trash2, Loader2, Users, Terminal, Code2, CheckCircle2, ArrowLeft, Share2, BookOpen, User, Lock, Edit2, Download, ArrowUp, ArrowDown, XCircle, Upload, LogOut, Key, Unlock, X, RotateCcw, RotateCw, Settings, Moon, Sun, Copy as CopyIcon, Scissors, ClipboardPaste } from 'lucide-react';
     import { marked } from 'marked';
 
     const DB_URL = 'db.json';       
@@ -114,36 +114,6 @@
         return hash.toString();
       }
     };
-
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      if (navigator.clipboard.readText) {
-        const originalReadText = navigator.clipboard.readText.bind(navigator.clipboard);
-        navigator.clipboard.readText = () => {
-          return originalReadText().catch(err => {
-            console.warn("⚠️ Collage via menu contextuel bloqué. Utilisez Ctrl+V.");
-            return Promise.resolve("");
-          });
-        };
-      }
-      if (navigator.clipboard.writeText) {
-        const originalWriteText = navigator.clipboard.writeText.bind(navigator.clipboard);
-        navigator.clipboard.writeText = (text) => {
-          return originalWriteText(text).catch(err => {
-            const textArea = document.createElement("textarea");
-            textArea.value = text;
-            textArea.style.position = "fixed";
-            textArea.style.left = "-999999px";
-            textArea.style.top = "-999999px";
-            document.body.appendChild(textArea);
-            textArea.focus();
-            textArea.select();
-            try { document.execCommand('copy'); } catch (fallbackErr) { console.error("Échec", fallbackErr); }
-            textArea.remove();
-            return Promise.resolve();
-          });
-        };
-      }
-    }
 
     let pyodidePromise = null;
     let monacoPromise = null;
@@ -606,14 +576,23 @@ def run():
       const [currentNbId, setCurrentNbId] = useState(null);
       const [selectedCellId, setSelectedCellId] = useState(null);
 
-      // Thème
+      // Thème & Presse-papiers & Permissions
       const [isDark, setIsDark] = useState(true);
       const [themeColor, setThemeColor] = useState('indigo');
       const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+      const [clipboardCell, setClipboardCell] = useState(null);
+      const [isCodeModalOpen, setIsCodeModalOpen] = useState(false);
+      const [codePermissions, setCodePermissions] = useState({ canUnlock: true, canCreate: true, canShare: true });
+
+      const getThemeHex = (color) => {
+        const colors = { indigo: '#6366f1', emerald: '#10b981', rose: '#f43f5e', amber: '#f59e0b', purple: '#a855f7' };
+        return colors[color] || '#6366f1';
+      };
 
       const [authMode, setAuthMode] = useState('login'); 
       const [inputUsername, setInputUsername] = useState('');
       const [inputPassword, setInputPassword] = useState('');
+      const [inputPasswordConfirm, setInputPasswordConfirm] = useState('');
       
       const [shareUsername, setShareUsername] = useState('');
       const [joinCode, setJoinCode] = useState('');
@@ -622,7 +601,7 @@ def run():
       const [editTitle, setEditTitle] = useState('');
       
       const [isProfileOpen, setIsProfileOpen] = useState(false);
-      const [profileForm, setProfileForm] = useState({ username: '', email: '', description: '', avatarUrl: '', newPassword: '' });
+      const [profileForm, setProfileForm] = useState({ username: '', email: '', description: '', newPassword: '' });
 
       const [historyPast, setHistoryPast] = useState([]);
       const [historyFuture, setHistoryFuture] = useState([]);
@@ -660,16 +639,13 @@ def run():
       const socketRef = useRef(null);
 
       useEffect(() => {
-        // On vérifie que window.io est disponible pour éviter l'erreur si le script a échoué
         if (typeof window.io === 'function') {
           socketRef.current = window.io();
-
           socketRef.current.on('data_updated', (newData) => {
             setServerData(newData);
           });
         }
 
-        // Récupération initiale
         fetch('/api/data')
           .then(res => {
             if (res.ok) return res.json();
@@ -773,6 +749,13 @@ def run():
         const trimmedUsername = inputUsername.trim();
         if (!trimmedUsername || !inputPassword) return;
 
+        if (authMode === 'register') {
+          if (inputPassword !== inputPasswordConfirm) {
+            alert("Les mots de passe ne correspondent pas !");
+            return;
+          }
+        }
+
         const hashed = await hashPassword(inputPassword);
 
         if (authMode === 'register') {
@@ -782,7 +765,7 @@ def run():
           const newUid = generateUUID();
           updateServer(data => {
             const newUsers = data.users ? data.users.filter(u => u.id !== newUid) : [];
-            return { ...data, users: [...newUsers, { id: newUid, username: trimmedUsername, password: hashed, email: '', description: '', avatarUrl: '' }] };
+            return { ...data, users: [...newUsers, { id: newUid, username: trimmedUsername, password: hashed, email: '', description: '' }] };
           });
           localStorage.setItem('collab_notebook_uid', newUid);
           setUser({ uid: newUid });
@@ -799,7 +782,7 @@ def run():
       const handleLogout = () => {
         localStorage.removeItem('collab_notebook_uid');
         setUser(null); setCurrentNbId(null); setSelectedCellId(null);
-        setInputUsername(''); setInputPassword('');
+        setInputUsername(''); setInputPassword(''); setInputPasswordConfirm('');
         setHistoryPast([]); setHistoryFuture([]);
       };
 
@@ -819,7 +802,7 @@ def run():
                 alert("Ce pseudo est déjà pris !"); return data; 
             }
             const newUsers = data.users.map(u => u.id === user.uid ? {
-                ...u, username: trimmedUsername, password: hashedPw, email: profileForm.email, description: profileForm.description, avatarUrl: profileForm.avatarUrl
+                ...u, username: trimmedUsername, password: hashedPw, email: profileForm.email, description: profileForm.description
             } : u);
             let newNotebooks = data.notebooks;
             if (trimmedUsername !== userData.username) {
@@ -835,15 +818,6 @@ def run():
             return { ...data, users: newUsers, notebooks: newNotebooks };
         });
         setIsProfileOpen(false);
-      };
-
-      const handleImageUpload = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-          const reader = new FileReader();
-          reader.onload = (event) => setProfileForm(prev => ({...prev, avatarUrl: event.target.result}));
-          reader.readAsDataURL(file);
-        }
       };
 
       const handleCreateNotebook = () => {
@@ -871,25 +845,49 @@ def run():
         const newNbId = generateUUID();
         const templateCells = serverData.cells.filter(c => c.notebookId === templateNb.id);
         const newCells = templateCells.map(c => ({
-          ...c, id: generateUUID(), notebookId: newNbId, output: '', status: 'idle', locked: false 
+          ...c, id: generateUUID(), notebookId: newNbId, output: '', status: 'idle', locked: c.locked // on conserve l'état locked
         }));
 
         updateServer(data => {
-          const newNb = { id: newNbId, title: `Exercice : ${templateNb.title}`, ownerUid: user.uid, ownerUsername: myData.username, sharedWith: [], createdAt: new Date().toISOString() };
+          const newNb = { 
+            id: newNbId, 
+            title: `Exercice : ${templateNb.title}`, 
+            ownerUid: user.uid, 
+            ownerUsername: myData.username, 
+            sharedWith: [], 
+            createdAt: new Date().toISOString(),
+            permissions: templateNb.studentPermissions || { canUnlock: true, canCreate: true, canShare: true }
+          };
           return { ...data, notebooks: [...(data.notebooks || []), newNb], cells: [...(data.cells || []), ...newCells] };
         });
         setCurrentNbId(newNbId); setJoinCode('');
         setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null);
       };
 
+      const openCodeModal = () => {
+          const activeNotebook = serverData.notebooks.find(n => n.id === currentNbId);
+          if (activeNotebook) {
+              setCodePermissions(activeNotebook.studentPermissions || { canUnlock: false, canCreate: false, canShare: false });
+              setIsCodeModalOpen(true);
+          }
+      };
+
       const handleGenerateAccessCode = () => {
-        if (!currentNbId || activeNotebook?.ownerUid !== user.uid) return;
-        let code = activeNotebook.accessCode;
-        if (!code) {
-           code = Math.random().toString(36).substring(2, 8).toUpperCase();
-           updateServer(data => ({ ...data, notebooks: data.notebooks.map(n => n.id === currentNbId ? { ...n, accessCode: code } : n) }));
-        }
-        alert(`Le code de cet exercice est : ${code}\n\nDonnez ce code à vos élèves.`);
+        if (!currentNbId) return;
+        let code = Math.random().toString(36).substring(2, 8).toUpperCase();
+        updateServer(data => ({ 
+            ...data, 
+            notebooks: data.notebooks.map(n => n.id === currentNbId ? { ...n, accessCode: code, studentPermissions: codePermissions } : n) 
+        }));
+      };
+
+      const handleSavePermissions = () => {
+          if (!currentNbId) return;
+          updateServer(data => ({
+              ...data,
+              notebooks: data.notebooks.map(n => n.id === currentNbId ? { ...n, studentPermissions: codePermissions } : n)
+          }));
+          setIsCodeModalOpen(false);
       };
 
       const processImportedFile = (fileContent, title, targetNbId) => {
@@ -1114,6 +1112,48 @@ for key in list(globals().keys()):
         URL.revokeObjectURL(url);
       };
 
+      // --- Copier / Couper / Coller ---
+      const handleCopyCell = () => {
+          const selectedCell = serverData.cells.find(c => c.id === selectedCellId);
+          if (!selectedCell) return;
+          setClipboardCell({ ...selectedCell, id: undefined, notebookId: undefined, output: '', status: 'idle' });
+      };
+
+      const handleCutCell = () => {
+          const selectedCell = serverData.cells.find(c => c.id === selectedCellId);
+          if (!selectedCell) return;
+          const activeNotebook = serverData.notebooks.find(n => n.id === currentNbId);
+          if (selectedCell.locked && (!activeNotebook?.permissions || activeNotebook.permissions.canUnlock === false)) return; // Protection
+          
+          setClipboardCell({ ...selectedCell, id: undefined, notebookId: undefined, output: '', status: 'idle' });
+          handleDeleteCell(selectedCell.id);
+      };
+
+      const handlePasteCell = () => {
+          if (!clipboardCell || !currentNbId) return;
+          handleSnapshot();
+          const newCellId = generateUUID();
+          updateServer(data => {
+              const nbCells = data.cells.filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
+              let insertOrder = 10;
+              if (selectedCellId) {
+                  const selIndex = nbCells.findIndex(c => c.id === selectedCellId);
+                  if (selIndex !== -1) {
+                      if (selIndex === nbCells.length - 1) {
+                          insertOrder = nbCells[selIndex].order + 10;
+                      } else {
+                          insertOrder = (nbCells[selIndex].order + nbCells[selIndex+1].order) / 2;
+                      }
+                  }
+              } else if (nbCells.length > 0) {
+                  insertOrder = nbCells[nbCells.length - 1].order + 10;
+              }
+              const newCell = { ...clipboardCell, id: newCellId, notebookId: currentNbId, order: insertOrder };
+              return { ...data, cells: [...data.cells, newCell] };
+          });
+          setSelectedCellId(newCellId);
+      };
+
       // --- Variables d'affichage ---
       const userData = user ? serverData.users.find(u => u.id === user.uid) : null;
       const myNotebooks = serverData.notebooks.filter(n => n.ownerUid === user?.uid);
@@ -1125,7 +1165,11 @@ for key in list(globals().keys()):
       const isSelectedCellFirst = activeCells[0]?.id === selectedCellId;
       const isSelectedCellLast = activeCells[activeCells.length - 1]?.id === selectedCellId;
 
-      const Avatar = ({ url, name, size=14 }) => url ? <img src={url} alt={name} style={{width: size+10, height: size+10}} className="rounded-full object-cover border border-slate-700" /> : <User size={size} />;
+      const Avatar = ({ name, size=14 }) => (
+        <div className="bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 rounded-full flex items-center justify-center border border-primary-200 dark:border-primary-800" style={{width: size+10, height: size+10}}>
+          <User size={size} />
+        </div>
+      );
 
       if (isAuthLoading) return <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-primary-500"><Loader2 className="w-10 h-10 animate-spin mb-4" /><p>Chargement local...</p></div>;
 
@@ -1139,12 +1183,15 @@ for key in list(globals().keys()):
               <form onSubmit={handleAuth} className="space-y-4">
                 <input type="text" required placeholder="Pseudo (ex: AlanTuring)" value={inputUsername} onChange={(e) => setInputUsername(e.target.value)} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-4 py-3 text-gray-900 dark:text-white focus:outline-none focus:border-primary-500 transition-colors" />
                 <input type="password" required placeholder="Mot de passe" value={inputPassword} onChange={(e) => setInputPassword(e.target.value)} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-4 py-3 text-gray-900 dark:text-white focus:outline-none focus:border-primary-500 transition-colors" />
-                <button type="submit" className="w-full bg-primary-600 hover:bg-primary-700 text-white font-medium py-3 rounded-lg transition-colors">
+                {authMode === 'register' && (
+                  <input type="password" required placeholder="Confirmez le mot de passe" value={inputPasswordConfirm} onChange={(e) => setInputPasswordConfirm(e.target.value)} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-4 py-3 text-gray-900 dark:text-white focus:outline-none focus:border-primary-500 transition-colors" />
+                )}
+                <button type="submit" className="w-full bg-primary-600 hover:bg-primary-700 text-white font-medium py-3 rounded-lg transition-colors mt-2">
                   {authMode === 'login' ? 'Se connecter' : "S'inscrire"}
                 </button>
               </form>
               <div className="mt-6 text-center">
-                <button onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')} className="text-sm text-primary-500 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
+                <button onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setInputPasswordConfirm(''); }} className="text-sm text-primary-500 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
                   {authMode === 'login' ? "Pas de compte ? S'inscrire" : 'Déjà un compte ? Se connecter'}
                 </button>
               </div>
@@ -1160,8 +1207,8 @@ for key in list(globals().keys()):
               <header className="flex flex-col md:flex-row items-start md:items-center justify-between mb-12 border-b border-gray-200 dark:border-slate-800 pb-6 gap-4">
                 <div className="flex items-center gap-3"><BookOpen size={28} className="text-primary-500" /><h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">Mes Notebooks</h1></div>
                 <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-                  <span className="text-gray-600 dark:text-slate-400 bg-white dark:bg-slate-900 px-4 py-2 rounded-full border border-gray-200 dark:border-slate-800 flex items-center gap-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800 shadow-sm transition-colors" onClick={() => { setProfileForm({ username: userData.username, email: userData.email || '', description: userData.description || '', avatarUrl: userData.avatarUrl || '', newPassword: '' }); setIsProfileOpen(true); }} title="Éditer le profil">
-                    <Avatar url={userData.avatarUrl} name={userData.username} /> <strong className="text-gray-900 dark:text-white max-w-[100px] truncate">{userData.username}</strong>
+                  <span className="text-gray-600 dark:text-slate-400 bg-white dark:bg-slate-900 px-4 py-2 rounded-full border border-gray-200 dark:border-slate-800 flex items-center gap-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800 shadow-sm transition-colors" onClick={() => { setProfileForm({ username: userData.username, email: userData.email || '', description: userData.description || '', newPassword: '' }); setIsProfileOpen(true); }} title="Éditer le profil">
+                    <Avatar name={userData.username} /> <strong className="text-gray-900 dark:text-white max-w-[100px] truncate">{userData.username}</strong>
                   </span>
                   
                   <form onSubmit={handleJoinByCode} className="flex gap-2">
@@ -1223,20 +1270,6 @@ for key in list(globals().keys()):
                         <input type="email" placeholder="email@exemple.com" value={profileForm.email} onChange={e => setProfileForm({...profileForm, email: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 outline-none" />
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Photo de profil (optionnel)</label>
-                        <div className="flex items-center gap-3">
-                          {profileForm.avatarUrl ? (
-                            <img src={profileForm.avatarUrl} alt="Avatar" className="w-12 h-12 rounded-full object-cover border border-gray-200 dark:border-slate-700" />
-                          ) : (
-                            <div className="w-12 h-12 rounded-full bg-gray-100 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 flex items-center justify-center text-gray-400"><User size={20}/></div>
-                          )}
-                          <button type="button" onClick={() => document.getElementById('avatar-upload').click()} className="flex items-center gap-2 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-sm text-gray-600 dark:text-slate-300 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 transition-colors">
-                            <ImageIcon size={16} /> Importer
-                          </button>
-                          <input id="avatar-upload" type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
-                        </div>
-                      </div>
-                      <div>
                         <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Description (optionnel)</label>
                         <textarea placeholder="Écrivez votre bio ici" value={profileForm.description} onChange={e => setProfileForm({...profileForm, description: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 outline-none h-20 resize-none"></textarea>
                       </div>
@@ -1272,7 +1305,7 @@ for key in list(globals().keys()):
                             <div className="absolute top-0 left-0 w-1 h-full bg-primary-500"></div>
                             <h3 className="text-lg font-medium mb-4 truncate">{nb.title}</h3>
                             <div className="flex items-center gap-2">
-                               <Avatar url={owner?.avatarUrl} name={nb.ownerUsername} size={18} />
+                               <Avatar name={nb.ownerUsername} size={18} />
                                <span className="text-sm text-primary-600 dark:text-primary-400 truncate">{nb.ownerUsername}</span>
                             </div>
                           </div>
@@ -1290,6 +1323,48 @@ for key in list(globals().keys()):
       return (
         <div className="min-h-screen transition-colors flex flex-col">
           
+          {/* MODAL CODE NOTEBOOK & PERMISSIONS */}
+          {isCodeModalOpen && activeNotebook && (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+              <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-md shadow-2xl relative">
+                <button onClick={() => setIsCodeModalOpen(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Code Notebook</h2>
+
+                <div className="mb-6 p-4 bg-gray-50 dark:bg-slate-800 rounded-lg text-center border border-gray-200 dark:border-slate-700">
+                  {activeNotebook.accessCode ? (
+                      <div>
+                        <div className="text-sm text-gray-500 dark:text-slate-400 mb-1">Code actuel</div>
+                        <div className="text-2xl font-mono font-bold text-emerald-600 dark:text-emerald-400 tracking-widest">{activeNotebook.accessCode}</div>
+                      </div>
+                  ) : (
+                      <div className="text-sm text-gray-500 dark:text-slate-400">Aucun code généré</div>
+                  )}
+                  <button onClick={handleGenerateAccessCode} className="mt-4 text-sm bg-gray-200 dark:bg-slate-700 hover:bg-gray-300 dark:hover:bg-slate-600 text-gray-800 dark:text-slate-200 px-4 py-2 rounded transition-colors font-medium">
+                    {activeNotebook.accessCode ? 'Régénérer le code' : 'Générer un code'}
+                  </button>
+                </div>
+
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-200 mb-3">Permissions pour les élèves (copies)</h3>
+                <div className="space-y-3 mb-6 bg-gray-50 dark:bg-slate-800/50 p-4 rounded-lg border border-gray-200 dark:border-slate-700/50">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" checked={codePermissions.canUnlock} onChange={e => setCodePermissions({...codePermissions, canUnlock: e.target.checked})} className="w-4 h-4 rounded text-primary-600" />
+                    <span className="text-sm text-gray-700 dark:text-slate-300">Déverrouiller les cellules verrouillées</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" checked={codePermissions.canCreate} onChange={e => setCodePermissions({...codePermissions, canCreate: e.target.checked})} className="w-4 h-4 rounded text-primary-600" />
+                    <span className="text-sm text-gray-700 dark:text-slate-300">Créer et supprimer des cellules</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" checked={codePermissions.canShare} onChange={e => setCodePermissions({...codePermissions, canShare: e.target.checked})} className="w-4 h-4 rounded text-primary-600" />
+                    <span className="text-sm text-gray-700 dark:text-slate-300">Partager le notebook</span>
+                  </label>
+                </div>
+
+                <button onClick={handleSavePermissions} className="w-full bg-primary-600 hover:bg-primary-700 text-white py-2.5 rounded-lg font-medium transition-colors shadow-sm">Enregistrer les paramètres</button>
+              </div>
+            </div>
+          )}
+
           {/* MODAL DE PARTAGE */}
           {isSharing && activeNotebook && (
             <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
@@ -1368,12 +1443,6 @@ for key in list(globals().keys()):
                   {isPyodideLoading ? <><Loader2 size={14} className="animate-spin text-amber-500" /><span className="text-amber-600 dark:text-amber-400/90 hidden sm:inline">Chargement...</span></> : pyodide ? <><CheckCircle2 size={14} className="text-emerald-500" /><span className="text-emerald-600 dark:text-emerald-400/90 hidden sm:inline">Python Prêt</span></> : <><span className="text-red-500 hidden sm:inline">Erreur Python</span></>}
                 </div>
 
-                {activeNotebook?.accessCode && (
-                  <span className="flex-shrink-0 text-xs font-mono bg-emerald-50 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 px-3 py-1.5 rounded-full border border-emerald-200 dark:border-emerald-800/50" title="Code de cet exercice">
-                    Code: {activeNotebook.accessCode}
-                  </span>
-                )}
-
                 <div className="flex flex-shrink-0 gap-1 sm:gap-2 relative items-center">
                   
                   {activeNotebook?.ownerUid === user?.uid && (
@@ -1386,8 +1455,10 @@ for key in list(globals().keys()):
                   <button onClick={handleDownload} className="flex items-center gap-2 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors" title="Exporter en .py"><Download size={16} /> <span className="hidden md:inline">Exporter</span></button>
                   {activeNotebook?.ownerUid === user?.uid && (
                     <>
-                      <button onClick={handleGenerateAccessCode} className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors" title="Créer un code pour distribuer ce notebook"><Key size={16} /> <span className="hidden md:inline">Code Élève</span></button>
-                      <button onClick={() => setIsSharing(true)} className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors" title="Partager pour collaborer en direct"><Share2 size={16} /> <span className="hidden md:inline">Partager</span></button>
+                      <button onClick={openCodeModal} className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors shadow-sm" title="Créer un code et configurer le notebook"><Key size={16} /> <span className="hidden md:inline">Code Notebook</span></button>
+                      {(!activeNotebook.permissions || activeNotebook.permissions.canShare) && (
+                        <button onClick={() => setIsSharing(true)} className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors shadow-sm" title="Partager pour collaborer en direct"><Share2 size={16} /> <span className="hidden md:inline">Partager</span></button>
+                      )}
                     </>
                   )}
 
@@ -1444,8 +1515,17 @@ for key in list(globals().keys()):
                    <button onClick={() => handleMoveCell(selectedCell.id, 'down')} disabled={isSelectedCellLast || selectedCell.locked} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Descendre"><ArrowDown size={14} /></button>
                  </div>
 
+                 {/* NOUVEAU : Copier, Couper, Coller */}
+                 <div className="flex flex-shrink-0 items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 ml-2">
+                   <button onClick={handleCopyCell} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white rounded-l hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Copier la cellule"><CopyIcon size={14} /></button>
+                   <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
+                   <button onClick={handleCutCell} disabled={selectedCell.locked && (!activeNotebook?.permissions || activeNotebook.permissions.canUnlock === false)} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Couper la cellule"><Scissors size={14} /></button>
+                   <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
+                   <button onClick={handlePasteCell} disabled={!clipboardCell || (activeNotebook?.permissions && activeNotebook.permissions.canCreate === false)} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Coller la cellule"><ClipboardPaste size={14} /></button>
+                 </div>
+
                  <div className="flex flex-shrink-0 items-center gap-2 ml-auto">
-                   {activeNotebook?.ownerUid === user?.uid && (
+                   {(!activeNotebook?.permissions || activeNotebook.permissions.canUnlock) && activeNotebook?.ownerUid === user?.uid && (
                      <button onClick={() => handleToggleLock(selectedCell.id, selectedCell.locked)} className={`flex items-center gap-1.5 px-2 py-1.5 rounded transition-colors text-xs font-medium ${selectedCell.locked ? 'text-amber-600 bg-amber-100 dark:text-amber-400 dark:bg-amber-900/30' : 'text-gray-600 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-[#3c3c3c]'}`} title={selectedCell.locked ? "Déverrouiller" : "Verrouiller"}>
                        {selectedCell.locked ? <Lock size={14} /> : <Unlock size={14} />} <span className="hidden sm:inline">{selectedCell.locked ? 'Verrouillé' : 'Libre'}</span>
                      </button>
@@ -1455,9 +1535,12 @@ for key in list(globals().keys()):
                          <XCircle size={14} /> <span className="hidden sm:inline">Effacer console</span>
                       </button>
                    )}
-                   <button onClick={() => handleDeleteCell(selectedCell.id)} disabled={selectedCell.locked && activeNotebook?.ownerUid !== user?.uid} className="flex items-center gap-1.5 px-2 py-1.5 text-red-600 bg-red-50 border border-red-200 dark:text-red-400 dark:bg-red-950/30 dark:border-red-900/50 hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Supprimer la cellule">
-                      <Trash2 size={14} /> <span className="hidden sm:inline">Supprimer</span>
-                   </button>
+                   
+                   {(!activeNotebook?.permissions || activeNotebook.permissions.canCreate) && (
+                     <button onClick={() => handleDeleteCell(selectedCell.id)} disabled={selectedCell.locked && activeNotebook?.ownerUid !== user?.uid} className="flex items-center gap-1.5 px-2 py-1.5 text-red-600 bg-red-50 border border-red-200 dark:text-red-400 dark:bg-red-950/30 dark:border-red-900/50 hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Supprimer la cellule">
+                        <Trash2 size={14} /> <span className="hidden sm:inline">Supprimer</span>
+                     </button>
+                   )}
                  </div>
                </div>
             ) : (
@@ -1472,7 +1555,9 @@ for key in list(globals().keys()):
               <div className="text-center py-20 bg-white dark:bg-[#161b22] rounded-xl border border-dashed border-gray-300 dark:border-slate-700 shadow-sm mx-2">
                 <Code2 size={48} className="mx-auto text-gray-400 dark:text-slate-600 mb-4" />
                 <h2 className="text-xl font-medium text-gray-700 dark:text-slate-300 mb-4">Notebook vide</h2>
-                <button onClick={handleAddCell} className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors shadow-sm"><Plus size={18} /> Créer la première cellule</button>
+                {(!activeNotebook?.permissions || activeNotebook.permissions.canCreate) && (
+                  <button onClick={handleAddCell} className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors shadow-sm"><Plus size={18} /> Créer la première cellule</button>
+                )}
               </div>
             ) : (
               <div className="space-y-2">
@@ -1491,7 +1576,11 @@ for key in list(globals().keys()):
                     isDark={isDark}
                   />
                 ))}
-                <div className="flex justify-center pt-6 pb-12"><button onClick={handleAddCell} className="flex items-center gap-2 px-6 py-2 bg-white dark:bg-[#252526] hover:bg-gray-50 dark:hover:bg-[#2d2d2d] border border-gray-200 dark:border-[#3c3c3c] text-gray-700 dark:text-[#cccccc] font-medium rounded transition-colors shadow-sm"><Plus size={16} /> Nouvelle cellule</button></div>
+                {(!activeNotebook?.permissions || activeNotebook.permissions.canCreate) && (
+                  <div className="flex justify-center pt-6 pb-12">
+                    <button onClick={handleAddCell} className="flex items-center gap-2 px-6 py-2 bg-white dark:bg-[#252526] hover:bg-gray-50 dark:hover:bg-[#2d2d2d] border border-gray-200 dark:border-[#3c3c3c] text-gray-700 dark:text-[#cccccc] font-medium rounded transition-colors shadow-sm"><Plus size={16} /> Nouvelle cellule</button>
+                  </div>
+                )}
               </div>
             )}
           </main>
