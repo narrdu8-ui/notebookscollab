@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Collab Notebook Python</title>
-  <link rel="icon" type="image/png" href="logocollab.png">
+  <title>Collab Notebook Python (Auto-hébergé)</title>
+  
   <!-- Tailwind CSS pour le style -->
   <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
   <script>
@@ -65,6 +65,7 @@
   </script>
 </head>
 <body class="bg-gray-50 dark:bg-[#1e1e1e] text-slate-900 dark:text-[#cccccc] m-0 p-0 transition-colors duration-200">
+  
   <div id="root">
     <div style="display:flex; height:100vh; align-items:center; justify-content:center; color:#64748b; flex-direction:column; gap:1rem;">
       <svg class="animate-spin h-8 w-8 text-primary-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
@@ -112,6 +113,15 @@
         }
         return hash.toString();
       }
+    };
+
+    // Générateur de couleur unique basé sur l'ID de l'utilisateur (pour les curseurs)
+    const getUserColor = (uid) => {
+        if (!uid) return '#6366f1';
+        const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f43f5e', '#84cc16', '#6366f1'];
+        let hash = 0;
+        for(let i = 0; i < uid.length; i++) hash += uid.charCodeAt(i);
+        return colors[hash % colors.length];
     };
 
     let pyodidePromise = null;
@@ -293,9 +303,10 @@ def run():
       return isReady;
     };
 
-    const MonacoEditor = ({ value, onChange, onFocus, onBlur, onRun, language = 'python', readOnly = false, isDark }) => {
+    const MonacoEditor = ({ value, onChange, onFocus, onBlur, onRun, language = 'python', readOnly = false, isDark, onCursorChange, remoteCursors = [] }) => {
       const editorContainerRef = useRef(null);
       const editorRef = useRef(null);
+      const oldDecorationsRef = useRef([]);
 
       useEffect(() => {
         if (editorContainerRef.current && !editorRef.current && window.monaco) {
@@ -346,6 +357,35 @@ def run():
         };
       }, []);
 
+      // Emission du curseur (debounce)
+      useEffect(() => {
+        if (editorRef.current && window.monaco && onCursorChange) {
+            const disposable = editorRef.current.onDidChangeCursorPosition((e) => {
+                if (window.cursorTimeout) clearTimeout(window.cursorTimeout);
+                window.cursorTimeout = setTimeout(() => {
+                    onCursorChange(e.position);
+                }, 500); // 500ms debounce
+            });
+            return () => disposable.dispose();
+        }
+      }, [onCursorChange]);
+
+      // Rendu des curseurs multijoueurs
+      useEffect(() => {
+          if (editorRef.current && window.monaco) {
+              const newDecorations = remoteCursors.map(c => ({
+                  range: new window.monaco.Range(c.lineNumber, c.column, c.lineNumber, c.column),
+                  options: {
+                      className: `remote-cursor-${c.userId}`,
+                      stickiness: window.monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
+                  }
+              }));
+              if (editorRef.current.deltaDecorations) {
+                  oldDecorationsRef.current = editorRef.current.deltaDecorations(oldDecorationsRef.current, newDecorations);
+              }
+          }
+      }, [remoteCursors]);
+
       useEffect(() => {
         if (editorRef.current && window.monaco) {
           window.monaco.editor.setModelLanguage(editorRef.current.getModel(), language);
@@ -393,14 +433,14 @@ def run():
       }, [onRun]);
 
       return (
-        <div className="w-full relative flex flex-col">
+        <div className="w-full relative flex flex-col z-0">
           <div ref={editorContainerRef} className={`w-full ${readOnly ? 'opacity-70' : ''}`} style={{ minHeight: '40px' }} />
         </div>
       );
     };
 
     // --- CELLULE ---
-    const Cell = ({ cell, isSelected, onSelect, onUpdate, pyodide, isPyodideLoading, isMonacoReady, registerRun, handleSnapshot, isDark, hasAdminRights }) => {
+    const Cell = ({ cell, isSelected, onSelect, onUpdate, onUpdateCursor, remoteCursors, pyodide, isPyodideLoading, isMonacoReady, registerRun, handleSnapshot, isDark, hasAdminRights }) => {
       const cellType = cell.type || 'code';
       const isLocked = cell.locked || false;
       const isCode = cellType === 'code';
@@ -411,15 +451,16 @@ def run():
       const [isEditingContent, setIsEditingContent] = useState((cellType === 'markdown' || cellType === 'heading') ? !cell.code : false);
       const typingTimeoutRef = useRef(null);
 
-      // Autorise les profs/admins à ignorer le cadenas
-      const enforceLock = isLocked && !hasAdminRights;
+      // Verrouillage STRICT : Si la cellule est verrouillée, personne ne peut écrire dedans
+      // Même un admin doit d'abord déverrouiller la cellule avec le bouton avant d'éditer.
+      const enforceLock = isLocked;
 
       useEffect(() => {
         if (!isFocused && cell.code !== localCode) setLocalCode(cell.code);
       }, [cell.code, isFocused]);
 
       const handleChange = (newValue) => {
-        if (enforceLock) return;
+        if (enforceLock) return; // Strict lock
         setLocalCode(newValue);
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
         typingTimeoutRef.current = setTimeout(() => onUpdate(cell.id, { code: newValue }), 600);
@@ -481,7 +522,7 @@ def run():
             >
               {/* Header */}
               <div className="flex items-center justify-end bg-gray-100 dark:bg-[#252526] pr-2 py-1 select-none border-b border-gray-200 dark:border-[#3c3c3c]">
-                 {isLocked && <Lock size={12} className={`mr-auto ml-2 ${hasAdminRights ? 'text-emerald-500/80' : 'text-amber-500/50'}`} title={hasAdminRights ? "Verrouillé (Ignoré car Admin/Prof)" : "Cellule Verrouillée"} />}
+                 {isLocked && <Lock size={12} className={`mr-auto ml-2 ${hasAdminRights ? 'text-emerald-500/80' : 'text-amber-500/50'}`} title="Cellule Verrouillée" />}
                  <button onClick={(e) => { e.stopPropagation(); handleRun(); }} disabled={isPyodideLoading || !pyodide} className="p-1.5 text-gray-600 dark:text-[#cccccc] hover:bg-gray-300 dark:hover:bg-[#333333] hover:text-primary-500 rounded transition-colors disabled:opacity-50 flex items-center gap-1 text-xs font-medium" title="Exécuter (Run) ou Maj+Entrée">
                     {cell.status === 'running' ? <Loader2 size={14} className="animate-spin text-amber-500" /> : <Play size={14} />}
                     <span className="hidden sm:inline">Exécuter</span>
@@ -489,9 +530,20 @@ def run():
               </div>
 
               {/* Éditeur Monaco */}
-              <div className={`bg-white dark:bg-[#1e1e1e] ${isLocked ? 'opacity-90' : ''}`}>
+              <div className={`bg-white dark:bg-[#1e1e1e] ${isLocked ? 'opacity-90' : ''} overflow-hidden`}>
                  {isMonacoReady ? (
-                    <MonacoEditor language="python" value={localCode} onChange={handleChange} onFocus={() => setIsFocused(true)} onBlur={() => setIsFocused(false)} onRun={handleRun} readOnly={enforceLock} isDark={isDark} />
+                    <MonacoEditor 
+                        language="python" 
+                        value={localCode} 
+                        onChange={handleChange} 
+                        onFocus={() => setIsFocused(true)} 
+                        onBlur={() => setIsFocused(false)} 
+                        onRun={handleRun} 
+                        readOnly={enforceLock} 
+                        isDark={isDark} 
+                        onCursorChange={(pos) => onUpdateCursor(cell.id, pos)}
+                        remoteCursors={remoteCursors}
+                    />
                  ) : (
                     <div className="h-[100px] flex items-center justify-center text-gray-500 dark:text-slate-500">Chargement de l'éditeur...</div>
                  )}
@@ -573,7 +625,7 @@ def run():
 
     function App() {
       const [user, setUser] = useState(null);
-      const [serverData, setServerData] = useState({ users: [], notebooks: [], cells: [] });
+      const [serverData, setServerData] = useState({ users: [], notebooks: [], cells: [], cursors: {} });
       const [isAuthLoading, setIsAuthLoading] = useState(true);
       
       const [currentNbId, setCurrentNbId] = useState(null);
@@ -714,6 +766,29 @@ def run():
         });
       };
 
+      // Gestion des Cursors distants
+      const handleUpdateCursor = (cellId, position) => {
+          if (!user || !currentNbId || !userData) return;
+          updateServer(data => {
+              const newCursors = { ...(data.cursors || {}) };
+              newCursors[user.uid] = {
+                  cellId,
+                  lineNumber: position.lineNumber,
+                  column: position.column,
+                  username: userData.username,
+                  color: getUserColor(user.uid),
+                  timestamp: Date.now()
+              };
+              // Nettoyage des curseurs inactifs (+ d'une minute)
+              for (const uid in newCursors) {
+                  if (Date.now() - newCursors[uid].timestamp > 60000) {
+                      delete newCursors[uid];
+                  }
+              }
+              return { ...data, cursors: newCursors };
+          });
+      };
+
       // --- LOGIQUE HISTORIQUE (Undo / Redo) ---
       const handleSnapshot = () => {
         if (!currentNbId) return;
@@ -793,6 +868,7 @@ def run():
           const newUid = generateUUID();
           updateServer(data => {
             const newUsers = data.users ? data.users.filter(u => u.id !== newUid) : [];
+            // Rôle par défaut : 'eleve'
             return { ...data, users: [...newUsers, { id: newUid, username: trimmedUsername, password: hashed, email: '', description: '', role: 'eleve' }] };
           });
           localStorage.setItem('collab_notebook_uid', newUid);
@@ -1062,7 +1138,6 @@ def run():
         }));
       };
 
-      // --- Actions Noyau ---
       const handleRestartKernel = async () => {
         if (!pyodide) return;
         if (window.confirm("Voulez-vous redémarrer l'exécuteur Python ? Toutes les variables en mémoire seront effacées.")) {
@@ -1268,36 +1343,34 @@ for key in list(globals().keys()):
         return (
           <div className="min-h-screen p-4 md:p-8 transition-colors relative">
             <div className="max-w-5xl mx-auto">
-              {/* HEADER REDESIGN */}
-              <header className="flex flex-col lg:flex-row items-start lg:items-center justify-between mb-10 pb-6 border-b border-gray-200 dark:border-slate-800 gap-4">
+              {/* RESTAURATION DU HEADER ORIGINAL POUR LE MENU */}
+              <header className="flex flex-col md:flex-row items-start md:items-center justify-between mb-12 border-b border-gray-200 dark:border-slate-800 pb-6 gap-4">
                 <div className="flex items-center gap-3">
-                  <BookOpen size={32} className="text-primary-500" />
-                  <h1 className="text-2xl lg:text-3xl font-extrabold text-gray-900 dark:text-white leading-tight">Mes<br/>Notebooks</h1>
+                    <BookOpen size={28} className="text-primary-500" />
+                    <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">Mes Notebooks</h1>
                 </div>
-                <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
-                  <button onClick={() => { setProfileForm({ username: userData.username, email: userData.email || '', description: userData.description || '', oldPassword: '', newPassword: '' }); setIsProfileOpen(true); }} className="flex items-center gap-2 bg-gray-100 dark:bg-[#161b22] border border-gray-200 dark:border-slate-800 px-3 py-1.5 rounded-full hover:bg-gray-200 dark:hover:bg-slate-800 transition-colors shadow-sm">
-                    <Avatar name={userData.username} role={userData.role} size={16} /> 
-                    <strong className="text-gray-900 dark:text-white max-w-[100px] truncate text-sm">{userData.username}</strong>
-                    {userData.role === 'admin' && <span className="text-[10px] bg-red-100 text-red-600 dark:bg-red-500/20 dark:text-red-400 px-1.5 rounded font-bold tracking-wide">ADMIN</span>}
-                    {userData.role === 'prof' && <span className="text-[10px] bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400 px-1.5 rounded font-bold tracking-wide">PROF</span>}
-                  </button>
+                <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                  <span className="text-gray-600 dark:text-slate-400 bg-white dark:bg-slate-900 px-4 py-2 rounded-full border border-gray-200 dark:border-slate-800 flex items-center gap-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800 shadow-sm transition-colors" onClick={() => { setProfileForm({ username: userData.username, email: userData.email || '', description: userData.description || '', oldPassword: '', newPassword: '' }); setIsProfileOpen(true); }} title="Éditer le profil">
+                    <Avatar name={userData.username} role={userData.role} /> 
+                    <strong className="text-gray-900 dark:text-white max-w-[100px] truncate">{userData.username}</strong>
+                    {userData.role === 'admin' && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 rounded ml-1">ADMIN</span>}
+                    {userData.role === 'prof' && <span className="text-[10px] bg-emerald-100 text-emerald-600 px-1.5 rounded ml-1">PROF</span>}
+                  </span>
                   
                   <form onSubmit={handleJoinByCode} className="flex gap-2">
-                    <input type="text" placeholder="Code d'accès..." value={joinCode} onChange={(e) => setJoinCode(e.target.value)} className="w-32 bg-white dark:bg-[#161b22] border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors text-gray-900 dark:text-white" />
-                    <button type="submit" className="bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 px-3 py-2 rounded-lg text-sm font-medium transition-colors hidden sm:block">Rejoindre</button>
-                    <button type="submit" className="bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50 px-3 rounded-lg sm:hidden"><Play size={14}/></button>
+                    <input type="text" placeholder="Code d'accès..." value={joinCode} onChange={(e) => setJoinCode(e.target.value)} className="w-28 md:w-36 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors" />
+                    <button type="submit" className="bg-gray-100 dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border border-gray-200 dark:border-slate-700 hover:border-emerald-500 px-3 py-2 rounded-lg text-sm font-medium transition-colors hidden sm:block">Rejoindre</button>
+                    <button type="submit" className="bg-gray-100 dark:bg-slate-800 hover:bg-emerald-50 text-emerald-600 border border-gray-200 dark:border-slate-700 px-3 rounded-lg sm:hidden"><Play size={14}/></button>
                   </form>
 
                   <input type="file" accept=".ipynb" className="hidden" ref={fileInputRef} onChange={handleImportNotebook} />
-                  <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center gap-2 bg-white dark:bg-[#161b22] hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-gray-200 px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-gray-200 dark:border-slate-700 shadow-sm"><Upload size={16} /> <span className="hidden md:inline">Importer</span></button>
-                  <button onClick={handleCreateNotebook} className="flex items-center justify-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm"><Plus size={16} /> <span className="hidden md:inline">Nouveau</span></button>
+                  <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center gap-2 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 text-gray-700 dark:text-white px-3 md:px-4 py-2.5 rounded-lg font-medium transition-colors border border-gray-200 dark:border-slate-700 shadow-sm flex-1 md:flex-none"><Upload size={18} /> <span className="hidden md:inline">Importer</span></button>
+                  <button onClick={handleCreateNotebook} className="flex items-center justify-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-3 md:px-5 py-2.5 rounded-lg font-medium transition-colors shadow-md flex-1 md:flex-none"><Plus size={18} /> <span className="hidden md:inline">Nouveau</span></button>
                   
-                  <div className="relative ml-1">
-                     <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-1 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"><Settings size={20}/></button>
+                  <div className="relative">
+                     <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"><Settings size={20}/></button>
                      {isSettingsOpen && (
-                        <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-[250]">
-                          
-                          {/* PANELS ADMIN / PROF */}
+                        <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-[300]">
                           {hasAdminRights && (
                              <div className="mb-4 border-b border-gray-100 dark:border-slate-700 pb-4">
                                 <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block font-semibold uppercase tracking-wider text-[10px]">Outils Privilégiés</span>
@@ -1309,7 +1382,6 @@ for key in list(globals().keys()):
                                 )}
                              </div>
                           )}
-
                           <h4 className="font-semibold text-gray-900 dark:text-white mb-4 border-b border-gray-100 dark:border-slate-700 pb-2">Apparence</h4>
                           <div className="flex items-center justify-between mb-4">
                             <span className="text-sm text-gray-600 dark:text-slate-300">Mode Sombre</span>
@@ -1396,7 +1468,13 @@ for key in list(globals().keys()):
                       {myNotebooks.map(nb => (
                         <div key={nb.id} onClick={() => { setCurrentNbId(nb.id); setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null); }} className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 shadow-sm group relative">
                           <button onClick={(e) => handleDeleteNotebook(e, nb.id)} className="absolute top-4 right-4 p-1.5 text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-slate-800 rounded transition-all opacity-0 group-hover:opacity-100" title="Supprimer ce notebook"><Trash2 size={16} /></button>
-                          <h3 className="text-lg font-medium mb-2 pr-6 truncate">{nb.title}</h3>
+                          
+                          {/* LOGO AJOUTÉ ICI DANS LE CARRE */}
+                          <div className="flex items-center gap-3 mb-2 pr-6">
+                             <img src="logo_nb.png" alt="Logo" className="w-6 h-6 object-contain rounded" onError={(e)=>e.target.style.display='none'} />
+                             <h3 className="text-lg font-medium truncate">{nb.title}</h3>
+                          </div>
+                          
                           <p className="text-sm text-gray-500 dark:text-slate-500 truncate">Partagé avec: {nb.sharedWith.length === 0 ? 'Personne' : nb.sharedWith.join(', ')}</p>
                         </div>
                       ))}
@@ -1412,7 +1490,13 @@ for key in list(globals().keys()):
                          return (
                           <div key={nb.id} onClick={() => { setCurrentNbId(nb.id); setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null); }} className="bg-white dark:bg-slate-900 border border-primary-100 dark:border-primary-900/50 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 relative overflow-hidden shadow-sm flex flex-col justify-between">
                             <div className="absolute top-0 left-0 w-1 h-full bg-primary-500"></div>
-                            <h3 className="text-lg font-medium mb-4 truncate">{nb.title}</h3>
+                            
+                            {/* LOGO AJOUTÉ ICI DANS LE CARRE */}
+                            <div className="flex items-center gap-3 mb-4">
+                               <img src="logo_nb.png" alt="Logo" className="w-6 h-6 object-contain rounded" onError={(e)=>e.target.style.display='none'} />
+                               <h3 className="text-lg font-medium truncate">{nb.title}</h3>
+                            </div>
+                            
                             <div className="flex items-center gap-2">
                                <Avatar name={nb.ownerUsername} size={18} role={owner?.role} />
                                <span onClick={(e) => { e.stopPropagation(); setViewingUser(owner); }} className="text-sm text-primary-600 dark:text-primary-400 truncate cursor-pointer hover:underline">{nb.ownerUsername}</span>
@@ -1537,7 +1621,7 @@ for key in list(globals().keys()):
           )}
 
           {/* ZONE DE NAVIGATION TOP ET BARRE GLOBALE - Sticky */}
-          <div className="sticky top-0 z-[200] flex flex-col shadow-md">
+          <div className="sticky top-0 z-[9999] flex flex-col shadow-md">
             
             {/* Barre principale */}
             <nav className="bg-white dark:bg-[#161b22] border-b border-gray-200 dark:border-slate-700/50 px-2 sm:px-4 py-2 flex flex-wrap gap-2 items-center justify-between">
@@ -1590,17 +1674,17 @@ for key in list(globals().keys()):
                   
                   {(activeNotebook?.ownerUid === user?.uid || hasAdminRights) && (
                     <>
-                      <button onClick={openCodeModal} className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors shadow-sm" title="Créer un code et configurer le notebook"><Key size={16} /> <span className="hidden md:inline">Code Élève</span></button>
+                      <button onClick={openCodeModal} className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors shadow-sm" title="Créer un code et configurer le notebook"><Key size={16} /> <span className="hidden md:inline">Générer code</span></button>
                       {(!activeNotebook.permissions || activeNotebook.permissions.canShare || hasAdminRights) && (
                         <button onClick={() => setIsSharing(true)} className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors shadow-sm" title="Partager pour collaborer en direct"><Share2 size={16} /> <span className="hidden md:inline">Partager</span></button>
                       )}
                     </>
                   )}
 
-                  <div className="relative border-l border-gray-200 dark:border-slate-700 pl-2 ml-2 flex items-center gap-1">
-                     <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors" title="Paramètres"><Settings size={20}/></button>
+                  <div className="relative border-l border-gray-200 dark:border-slate-700 pl-2 ml-2 flex items-center gap-1 z-[9999]">
+                     <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors relative z-[9999]" title="Paramètres"><Settings size={20}/></button>
                      {isSettingsOpen && (
-                       <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-[250]">
+                       <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-[9999]">
                          
                          {/* PANELS ADMIN / PROF */}
                          {hasAdminRights && (
@@ -1634,7 +1718,7 @@ for key in list(globals().keys()):
                          </div>
                        </div>
                      )}
-                     <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Se déconnecter"><LogOut size={20}/></button>
+                     <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors relative z-[9999]" title="Se déconnecter"><LogOut size={20}/></button>
                   </div>
 
                 </div>
@@ -1721,13 +1805,20 @@ for key in list(globals().keys()):
               </div>
             ) : (
               <div className="space-y-2">
-                {activeCells.map((cell) => (
+                {activeCells.map((cell) => {
+                  const remoteCursors = Object.entries(serverData.cursors || {})
+                      .filter(([uid, cursor]) => uid !== user?.uid && cursor.cellId === cell.id)
+                      .map(([uid, cursor]) => ({ userId: uid, ...cursor }));
+
+                  return (
                   <Cell 
                     key={cell.id} 
                     cell={cell} 
                     isSelected={selectedCellId === cell.id}
                     onSelect={setSelectedCellId}
                     onUpdate={handleUpdateCell} 
+                    onUpdateCursor={handleUpdateCursor}
+                    remoteCursors={remoteCursors}
                     pyodide={pyodide} 
                     isPyodideLoading={isPyodideLoading} 
                     isMonacoReady={isMonacoReady} 
@@ -1736,7 +1827,7 @@ for key in list(globals().keys()):
                     isDark={isDark}
                     hasAdminRights={hasAdminRights}
                   />
-                ))}
+                )})}
                 {(!activeNotebook?.permissions || activeNotebook.permissions.canCreate || hasAdminRights) && (
                   <div className="flex justify-center pt-6 pb-12">
                     <button onClick={handleAddCell} className="flex items-center gap-2 px-6 py-2 bg-white dark:bg-[#252526] hover:bg-gray-50 dark:hover:bg-[#2d2d2d] border border-gray-200 dark:border-[#3c3c3c] text-gray-700 dark:text-[#cccccc] font-medium rounded transition-colors shadow-sm"><Plus size={16} /> Nouvelle cellule</button>
