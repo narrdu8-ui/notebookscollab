@@ -13,7 +13,13 @@
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
-    :root { --color-primary-500: #10b981; --color-primary-600: #059669; --color-primary-700: #047857; } /* Vert par défaut pour les profs */
+    :root { --color-primary-500: #10b981; --color-primary-600: #059669; --color-primary-700: #047857; }
+    
+    /* Scrollbar personnalisée */
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(16, 185, 129, 0.2); border-radius: 10px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(16, 185, 129, 0.5); }
   </style>
 
   <script type="importmap">
@@ -35,55 +41,186 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useRef } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { GraduationCap, ArrowLeft, Loader2, BookCopy, Users } from 'lucide-react';
+    import { GraduationCap, ArrowLeft, Loader2, BookCopy, Users, ChevronDown, ChevronUp, Search, Key, UserCog, BookOpen, Trash2 } from 'lucide-react';
+
+    // Fonction de hashage pour les mots de passe
+    const hashPassword = async (password) => {
+      if (typeof crypto !== 'undefined' && crypto.subtle) {
+        const msgBuffer = new TextEncoder().encode(password);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+        return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+      } else {
+        let hash = 0; for (let i = 0; i < password.length; i++) { hash = ((hash << 5) - hash) + password.charCodeAt(i); hash = hash & hash; }
+        return hash.toString();
+      }
+    };
 
     function ProfApp() {
       const [serverData, setServerData] = useState({ users: [], notebooks: [], cells: [] });
       const [isReady, setIsReady] = useState(false);
       const [user, setUser] = useState(null);
+      const socketRef = useRef(null);
+
+      // États pour la navigation
+      const [activeTab, setActiveTab] = useState('copies'); // 'copies' ou 'accounts'
+      
+      // États pour les Copies
+      const [searchCopies, setSearchCopies] = useState('');
+      const [expandedTemplates, setExpandedTemplates] = useState([]);
+
+      // États pour la Gestion des Comptes
+      const [searchAccounts, setSearchAccounts] = useState('');
+      const [expandedAccounts, setExpandedAccounts] = useState([]);
 
       useEffect(() => {
         let uid = localStorage.getItem('collab_notebook_uid');
         const loadTheme = localStorage.getItem('collab_theme');
         if (loadTheme === 'light') document.documentElement.classList.remove('dark');
         
-        fetch('/api/data')
-          .then(res => res.json())
-          .then(data => {
+        // Initialisation WebSockets
+        if (typeof window.io === 'function') {
+          try {
+            socketRef.current = window.io();
+            socketRef.current.on('data_updated', (newData) => setServerData(newData));
+          } catch(e) {
+            console.warn("WebSocket non disponible en mode aperçu.");
+          }
+        }
+
+        const fetchServerData = async () => {
+          try {
+             // Tente de récupérer les vraies données depuis l'API
+             const res = await fetch('/api/data');
+             const data = await res.json();
              setServerData(data);
              const myUser = data.users.find(u => u.id === uid);
+             
              if (!myUser || (myUser.role !== 'prof' && myUser.role !== 'admin')) {
-                 window.location.href = '/'; // Ejection immédiate
+                 try { window.location.href = '/'; } catch(e) { console.error("Redirection bloquée."); }
              } else {
                  setUser(myUser);
                  setIsReady(true);
              }
-          })
-          .catch(err => {
-             console.error("API off", err);
-             window.location.href = '/';
-          });
+          } catch (err) {
+             console.warn("API indisponible (Aperçu). Chargement des données de test (Mock).", err);
+             
+             // Génération de données fictives si on est dans l'environnement de prévisualisation
+             if (!uid) {
+                 uid = 'prof-demo-id';
+                 localStorage.setItem('collab_notebook_uid', uid);
+             }
+             const mockUser = { id: uid, username: 'Professeur Demo', role: 'prof' };
+             const mockData = {
+                 users: [
+                     mockUser,
+                     { id: 'eleve1', username: 'AlanTuring', role: 'eleve' },
+                     { id: 'eleve2', username: 'AdaLovelace', role: 'eleve' },
+                     { id: 'eleve3', username: 'GraceHopper', role: 'eleve' }
+                 ],
+                 notebooks: [
+                     // Exercices d'origine
+                     { id: 'nb1', title: 'Exercice 1 : Variables et Boucles', ownerUid: uid, accessCode: 'PY101', templateSourceId: null, sharedWith: [] },
+                     { id: 'nb2', title: 'Exercice 2 : Fonctions Avancées', ownerUid: uid, accessCode: 'PY202', templateSourceId: null, sharedWith: [] },
+                     
+                     // Copies de l'exercice 1
+                     { id: 'c1', title: 'Copie - Variables et Boucles', ownerUid: 'eleve1', ownerUsername: 'AlanTuring', templateSourceId: 'nb1', templateOwnerUid: uid, createdAt: new Date().toISOString(), sharedWith: [] },
+                     { id: 'c2', title: 'Copie - Variables et Boucles', ownerUid: 'eleve2', ownerUsername: 'AdaLovelace', templateSourceId: 'nb1', templateOwnerUid: uid, createdAt: new Date(Date.now() - 3600000).toISOString(), sharedWith: [] },
+                     
+                     // Copie de l'exercice 2
+                     { id: 'c3', title: 'Copie - Fonctions Avancées', ownerUid: 'eleve3', ownerUsername: 'GraceHopper', templateSourceId: 'nb2', templateOwnerUid: uid, createdAt: new Date(Date.now() - 7200000).toISOString(), sharedWith: [] },
+                     
+                     // Notebook personnel d'un élève (visible dans Gestion Comptes)
+                     { id: 'p1', title: 'Brouillon Python Perso', ownerUid: 'eleve1', ownerUsername: 'AlanTuring', templateSourceId: null, sharedWith: [] },
+                     { id: 'p2', title: 'Projet de fin d\'année', ownerUid: 'eleve1', ownerUsername: 'AlanTuring', templateSourceId: null, sharedWith: [] }
+                 ],
+                 cells: []
+             };
+             
+             setServerData(mockData);
+             setUser(mockUser);
+             setIsReady(true);
+          }
+        };
+
+        fetchServerData();
       }, []);
+
+      // Fonction pour mettre à jour les données (Sockets + State)
+      const updateServer = (mutationFn) => {
+        setServerData(prevData => {
+          const newData = mutationFn(prevData);
+          if (socketRef.current) socketRef.current.emit('update_data', newData);
+          return newData; 
+        });
+      };
 
       const openNotebook = (nbId) => {
           localStorage.setItem('collab_open_nb', nbId);
-          window.location.href = '/';
+          try {
+             window.location.href = '/';
+          } catch(e) {
+             alert(`Ouverture du notebook : ${nbId}\n(La redirection est désactivée dans cet aperçu sécurisé).`);
+          }
       };
 
       if (!isReady) return <div className="h-screen w-screen flex items-center justify-center bg-gray-900 text-emerald-500"><Loader2 className="animate-spin w-8 h-8" /></div>;
 
-      // Récupérer toutes les copies créées à partir des modèles de ce prof
+      // --- LOGIQUE ONGLET COPIES ---
       const studentCopies = serverData.notebooks.filter(n => n.templateOwnerUid === user.id);
-      
-      // Grouper par modèle d'origine (l'exercice)
       const copiesByTemplate = {};
       studentCopies.forEach(nb => {
           if (!copiesByTemplate[nb.templateSourceId]) copiesByTemplate[nb.templateSourceId] = [];
           copiesByTemplate[nb.templateSourceId].push(nb);
       });
-
-      // Récupérer les infos des modèles originaux
       const originalTemplates = serverData.notebooks.filter(n => n.ownerUid === user.id && n.accessCode);
+
+      // Filtrage des templates
+      const filteredTemplates = originalTemplates.filter(template => {
+          const searchLower = searchCopies.toLowerCase();
+          const matchesTitle = template.title.toLowerCase().includes(searchLower);
+          const copies = copiesByTemplate[template.id] || [];
+          const matchesStudent = copies.some(c => c.ownerUsername.toLowerCase().includes(searchLower));
+          return matchesTitle || matchesStudent;
+      });
+
+      const toggleTemplate = (id) => {
+          setExpandedTemplates(prev => prev.includes(id) ? prev.filter(t => t !== id) : [...prev, id]);
+      };
+
+      // --- LOGIQUE ONGLET COMPTES ---
+      // On récupère tous les élèves
+      const students = serverData.users.filter(u => u.role === 'eleve' || !u.role);
+      const filteredStudents = students.filter(s => {
+          const studentNotebooks = serverData.notebooks.filter(n => n.ownerUid === s.id);
+          const searchLower = searchAccounts.toLowerCase();
+          const matchesName = s.username.toLowerCase().includes(searchLower);
+          const matchesNotebook = studentNotebooks.some(nb => nb.title.toLowerCase().includes(searchLower));
+          return matchesName || matchesNotebook;
+      });
+
+      const toggleAccount = (id) => {
+          setExpandedAccounts(prev => prev.includes(id) ? prev.filter(a => a !== id) : [...prev, id]);
+      };
+
+      const handleResetPassword = async (targetUserId, username) => {
+          const newPw = prompt(`Nouveau mot de passe pour l'élève "${username}" :`);
+          if (!newPw) return;
+          const hashed = await hashPassword(newPw);
+          updateServer(data => ({
+              ...data,
+              users: data.users.map(u => u.id === targetUserId ? { ...u, password: hashed } : u)
+          }));
+          alert(`Mot de passe modifié avec succès pour ${username}.`);
+      };
+
+      const handleDeleteNotebook = (nbId, title) => {
+          if (!window.confirm(`Supprimer le notebook "${title}" ? Cette action est irréversible.`)) return;
+          updateServer(data => ({
+              ...data,
+              notebooks: data.notebooks.filter(n => n.id !== nbId),
+              cells: data.cells.filter(c => c.notebookId !== nbId)
+          }));
+      };
 
       return (
         <div className="flex h-screen overflow-hidden">
@@ -92,12 +229,30 @@
                 <div className="p-6 flex items-center gap-3 text-emerald-500 font-bold text-xl border-b border-slate-800">
                     <GraduationCap size={28} /> Espace Prof
                 </div>
-                <div className="p-4 flex-1">
+                <div className="p-4 flex-1 space-y-2">
                     <div className="text-xs uppercase tracking-widest text-slate-500 mb-4 font-bold">Navigation</div>
-                    <a href="/" className="flex items-center gap-3 px-4 py-3 hover:bg-slate-800 rounded-lg transition-colors mb-2 text-slate-300">
+                    
+                    <a href="/" className="flex items-center gap-3 px-4 py-3 hover:bg-slate-800 rounded-lg transition-colors text-slate-300">
                         <ArrowLeft size={18} /> Retour au code
                     </a>
+
+                    <div className="h-px bg-slate-800 my-4"></div>
+                    
+                    <button 
+                        onClick={() => setActiveTab('copies')} 
+                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors font-medium ${activeTab === 'copies' ? 'bg-emerald-600/20 text-emerald-400' : 'hover:bg-slate-800 text-slate-300'}`}
+                    >
+                        <BookCopy size={18} /> Exercices et Copies
+                    </button>
+                    
+                    <button 
+                        onClick={() => setActiveTab('accounts')} 
+                        className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-colors font-medium ${activeTab === 'accounts' ? 'bg-emerald-600/20 text-emerald-400' : 'hover:bg-slate-800 text-slate-300'}`}
+                    >
+                        <UserCog size={18} /> Gestion Comptes
+                    </button>
                 </div>
+                
                 <div className="p-6 bg-slate-800/50 mt-auto">
                     <p className="text-xs text-slate-400 mb-1">Connecté en tant que</p>
                     <p className="font-bold text-white truncate">{user.username}</p>
@@ -105,82 +260,271 @@
             </div>
 
             {/* MAIN CONTENT */}
-            <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-[#121212] p-4 md:p-8">
+            <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-[#121212] p-4 md:p-8 custom-scrollbar">
                 
-                <header className="flex justify-between items-center mb-8">
+                <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
                     <h1 className="text-3xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
-                        <GraduationCap className="text-emerald-500 md:hidden" /> Copies des Élèves
+                        {activeTab === 'copies' ? <><GraduationCap className="text-emerald-500 md:hidden" /> Suivi des Exercices</> : <><UserCog className="text-emerald-500 md:hidden" /> Gestion des Élèves</>}
                     </h1>
-                    <a href="/" className="md:hidden bg-gray-200 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-4 py-2 rounded-lg font-medium flex items-center gap-2">
-                        <ArrowLeft size={16}/> Quitter
-                    </a>
+                    <div className="flex gap-2 w-full sm:w-auto">
+                        <a href="/" className="md:hidden bg-gray-200 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-4 py-2 rounded-lg font-medium flex items-center justify-center flex-1 gap-2">
+                            <ArrowLeft size={16}/> Quitter
+                        </a>
+                        <button onClick={() => setActiveTab(activeTab === 'copies' ? 'accounts' : 'copies')} className="md:hidden bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 px-4 py-2 rounded-lg font-medium flex items-center justify-center flex-1 gap-2">
+                            {activeTab === 'copies' ? <UserCog size={16}/> : <BookCopy size={16}/>} Menu
+                        </button>
+                    </div>
                 </header>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
-                    <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm flex items-center gap-4">
-                        <div className="p-4 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-xl"><BookCopy size={24}/></div>
-                        <div>
-                            <div className="text-2xl font-bold text-gray-900 dark:text-white">{studentCopies.length}</div>
-                            <div className="text-sm text-gray-500">Copies d'élèves générées</div>
+                {/* ONGLET 1: COPIES DES ÉLÈVES */}
+                {activeTab === 'copies' && (
+                    <div className="space-y-6">
+                        {/* Statistiques et Recherche */}
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+                            <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm flex items-center gap-4">
+                                <div className="p-4 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-xl"><BookCopy size={24}/></div>
+                                <div>
+                                    <div className="text-2xl font-bold text-gray-900 dark:text-white">{studentCopies.length}</div>
+                                    <div className="text-sm text-gray-500">Copies ouvertes</div>
+                                </div>
+                            </div>
+                            <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm flex items-center gap-4">
+                                <div className="p-4 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl"><BookOpen size={24}/></div>
+                                <div>
+                                    <div className="text-2xl font-bold text-gray-900 dark:text-white">{originalTemplates.length}</div>
+                                    <div className="text-sm text-gray-500">Exercices actifs</div>
+                                </div>
+                            </div>
+                            <div className="bg-white dark:bg-[#1e1e1e] p-4 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm flex flex-col justify-center">
+                                <label className="text-sm text-gray-500 mb-2 font-medium">Recherche</label>
+                                <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                                    <input 
+                                        type="text" 
+                                        placeholder="Rechercher un notebook / élève..." 
+                                        value={searchCopies}
+                                        onChange={(e) => setSearchCopies(e.target.value)}
+                                        className="w-full bg-gray-50 dark:bg-[#121212] border border-gray-200 dark:border-gray-700 rounded-lg pl-10 pr-4 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:border-emerald-500 transition-colors"
+                                    />
+                                </div>
+                            </div>
                         </div>
-                    </div>
-                    <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm flex items-center gap-4">
-                        <div className="p-4 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl"><Users size={24}/></div>
-                        <div>
-                            <div className="text-2xl font-bold text-gray-900 dark:text-white">{originalTemplates.length}</div>
-                            <div className="text-sm text-gray-500">Exercices actifs (avec code)</div>
-                        </div>
-                    </div>
-                </div>
 
-                {originalTemplates.length === 0 ? (
-                    <div className="text-center p-12 bg-white dark:bg-[#1e1e1e] border border-dashed border-gray-300 dark:border-gray-700 rounded-2xl">
-                        <GraduationCap size={48} className="mx-auto text-gray-400 mb-4" />
-                        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Aucun exercice en cours</h3>
-                        <p className="text-gray-500 max-w-md mx-auto">Créez un notebook depuis l'application principale et générez un "Code Élève" pour que vos étudiants puissent le rejoindre et créer leur propre copie.</p>
-                    </div>
-                ) : (
-                    <div className="space-y-8">
-                        {originalTemplates.map(template => {
-                            const copies = copiesByTemplate[template.id] || [];
-                            return (
-                                <div key={template.id} className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm overflow-hidden">
-                                    <div className="p-5 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-[#181818] flex justify-between items-center flex-wrap gap-4">
-                                        <div>
-                                            <h3 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                                                {template.title}
-                                            </h3>
-                                            <p className="text-sm text-gray-500 mt-1">Code distribué : <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 px-2 py-0.5 rounded">{template.accessCode}</span></p>
-                                        </div>
-                                        <div className="text-sm bg-white dark:bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 font-medium shadow-sm">
-                                            {copies.length} {copies.length > 1 ? 'copies rendues' : 'copie rendue'}
-                                        </div>
-                                    </div>
+                        {filteredTemplates.length === 0 ? (
+                            <div className="text-center p-12 bg-white dark:bg-[#1e1e1e] border border-dashed border-gray-300 dark:border-gray-700 rounded-2xl">
+                                <Search size={48} className="mx-auto text-gray-400 mb-4" />
+                                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Aucun résultat trouvé</h3>
+                                <p className="text-gray-500">Essayez de modifier votre recherche ou assurez-vous d'avoir créé des exercices.</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {filteredTemplates.map(template => {
+                                    const copies = copiesByTemplate[template.id] || [];
+                                    const isExpanded = expandedTemplates.includes(template.id);
                                     
-                                    <div className="p-5">
-                                        {copies.length === 0 ? (
-                                            <p className="text-gray-500 text-sm italic">Personne n'a encore utilisé ce code.</p>
-                                        ) : (
-                                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                                                {copies.map(copy => (
-                                                    <div key={copy.id} className="border border-gray-200 dark:border-gray-700 rounded-xl p-4 flex flex-col justify-between bg-white dark:bg-[#252525] hover:border-emerald-500 transition-colors group">
-                                                        <div>
-                                                            <div className="flex justify-between items-start mb-2">
-                                                                <h4 className="font-bold text-gray-900 dark:text-white truncate" title={copy.ownerUsername}>{copy.ownerUsername}</h4>
-                                                            </div>
-                                                            <p className="text-xs text-gray-500 dark:text-gray-400">Rendu le : {new Date(copy.createdAt).toLocaleDateString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</p>
+                                    // Filtrer les copies si la recherche est active (montre toutes les copies si la recherche match le titre)
+                                    const filteredCopies = searchCopies && !template.title.toLowerCase().includes(searchCopies.toLowerCase()) 
+                                        ? copies.filter(c => c.ownerUsername.toLowerCase().includes(searchCopies.toLowerCase())) 
+                                        : copies;
+
+                                    return (
+                                        <div key={template.id} className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-xl shadow-sm overflow-hidden transition-all">
+                                            {/* EN-TÊTE ACCORDÉON */}
+                                            <div 
+                                                onClick={() => toggleTemplate(template.id)}
+                                                className="p-4 sm:p-5 flex justify-between items-center cursor-pointer hover:bg-gray-50 dark:hover:bg-[#252525] transition-colors"
+                                            >
+                                                <div className="flex-1">
+                                                    <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-1">
+                                                        {template.title}
+                                                    </h3>
+                                                    <div className="flex flex-wrap items-center gap-3 text-sm">
+                                                        <span className="text-gray-500">Code : <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 px-2 py-0.5 rounded ml-1">{template.accessCode}</span></span>
+                                                        <span className="w-1 h-1 bg-gray-300 dark:bg-gray-700 rounded-full"></span>
+                                                        <span className="text-gray-600 dark:text-gray-300 font-medium">{copies.length} {copies.length > 1 ? 'copies' : 'copie'}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="text-gray-400 ml-4 bg-gray-100 dark:bg-gray-800 p-2 rounded-full">
+                                                    {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                                                </div>
+                                            </div>
+                                            
+                                            {/* CONTENU ACCORDÉON */}
+                                            {isExpanded && (
+                                                <div className="p-0 border-t border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-[#181818]">
+                                                    {filteredCopies.length === 0 ? (
+                                                        <div className="p-8 text-center text-sm text-gray-500 italic">Aucune copie d'élève pour le moment.</div>
+                                                    ) : (
+                                                        <div className="overflow-x-auto">
+                                                            <table className="w-full text-left border-collapse">
+                                                                <thead className="bg-gray-50 dark:bg-[#1a1a1a] border-b border-gray-200 dark:border-gray-800">
+                                                                    <tr>
+                                                                        <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Titre</th>
+                                                                        <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Propriétaire</th>
+                                                                        <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Date d'ouverture</th>
+                                                                        <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Actions</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody className="divide-y divide-gray-100 dark:divide-gray-800/50">
+                                                                    {filteredCopies.map(copy => (
+                                                                        <tr key={copy.id} className="hover:bg-gray-50 dark:hover:bg-[#252525] transition-colors">
+                                                                            <td className="p-4">
+                                                                                <div className="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-2 max-w-[200px] truncate" title={copy.title || "Copie"}>
+                                                                                    <BookOpen size={14} className="text-gray-400 flex-shrink-0"/> <span className="truncate">{copy.title || "Copie"}</span>
+                                                                                </div>
+                                                                            </td>
+                                                                            <td className="p-4 text-sm text-gray-600 dark:text-gray-300">
+                                                                                {copy.ownerUsername}
+                                                                            </td>
+                                                                            <td className="p-4 text-sm text-gray-500 dark:text-gray-400">
+                                                                                {new Date(copy.createdAt).toLocaleDateString('fr-FR', { day:'2-digit', month:'2-digit', year:'numeric', hour: '2-digit', minute: '2-digit' })}
+                                                                            </td>
+                                                                            <td className="p-4 flex justify-end gap-2">
+                                                                                <button onClick={() => openNotebook(copy.id)} className="text-sm bg-gray-100 dark:bg-gray-800 hover:bg-emerald-100 hover:text-emerald-700 dark:hover:bg-emerald-900/50 dark:hover:text-emerald-400 text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded transition-colors font-medium">Ouvrir</button>
+                                                                                <button onClick={() => handleDeleteNotebook(copy.id, copy.title || "Copie")} className="bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 p-1.5 rounded transition-colors" title="Supprimer la copie"><Trash2 size={16} /></button>
+                                                                            </td>
+                                                                        </tr>
+                                                                    ))}
+                                                                </tbody>
+                                                            </table>
                                                         </div>
-                                                        <button onClick={() => openNotebook(copy.id)} className="mt-4 w-full bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-600 dark:hover:text-white py-2 rounded-lg text-sm font-medium transition-colors">
-                                                            Consulter la copie
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {/* ONGLET 2: GESTION DES COMPTES ÉLÈVES */}
+                {activeTab === 'accounts' && (
+                    <div className="space-y-6">
+                        
+                        <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm flex flex-col sm:flex-row gap-4 items-center justify-between mb-8">
+                            <div className="flex items-center gap-4">
+                                <div className="p-4 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded-xl"><Users size={24}/></div>
+                                <div>
+                                    <div className="text-2xl font-bold text-gray-900 dark:text-white">{students.length}</div>
+                                    <div className="text-sm text-gray-500">Élèves inscrits</div>
+                                </div>
+                            </div>
+                            <div className="w-full sm:w-72">
+                                <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
+                                    <input 
+                                        type="text" 
+                                        placeholder="Rechercher un notebook / élève..." 
+                                        value={searchAccounts}
+                                        onChange={(e) => setSearchAccounts(e.target.value)}
+                                        className="w-full bg-gray-50 dark:bg-[#121212] border border-gray-200 dark:border-gray-700 rounded-lg pl-10 pr-4 py-2 text-sm text-gray-900 dark:text-white focus:outline-none focus:border-emerald-500 transition-colors"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        {filteredStudents.length === 0 ? (
+                            <div className="text-center p-12 bg-white dark:bg-[#1e1e1e] border border-dashed border-gray-300 dark:border-gray-700 rounded-2xl">
+                                <Users size={48} className="mx-auto text-gray-400 mb-4" />
+                                <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Aucun élève trouvé</h3>
+                                <p className="text-gray-500">La recherche n'a retourné aucun résultat.</p>
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                {filteredStudents.map(student => {
+                                    const isExpanded = expandedAccounts.includes(student.id);
+                                    // Notebooks appartenant à cet élève
+                                    const studentNotebooks = serverData.notebooks.filter(n => n.ownerUid === student.id);
+
+                                    return (
+                                        <div key={student.id} className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-xl shadow-sm overflow-hidden transition-all">
+                                            
+                                            {/* EN-TÊTE ACCORDÉON ÉLÈVE */}
+                                            <div 
+                                                onClick={() => toggleAccount(student.id)}
+                                                className="p-4 sm:p-5 flex justify-between items-center cursor-pointer hover:bg-gray-50 dark:hover:bg-[#252525] transition-colors"
+                                            >
+                                                <div className="flex items-center gap-4">
+                                                    <div className="w-10 h-10 rounded-full bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-300 font-bold text-lg">
+                                                        {student.username.charAt(0).toUpperCase()}
+                                                    </div>
+                                                    <div>
+                                                        <h3 className="text-lg font-bold text-gray-900 dark:text-white">{student.username}</h3>
+                                                        <p className="text-sm text-gray-500">{studentNotebooks.length} notebook(s) au total</p>
+                                                    </div>
+                                                </div>
+                                                <div className="text-gray-400 bg-gray-100 dark:bg-gray-800 p-2 rounded-full">
+                                                    {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                                                </div>
+                                            </div>
+
+                                            {/* CONTENU ACCORDÉON ÉLÈVE */}
+                                            {isExpanded && (
+                                                <div className="p-0 border-t border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-[#181818]">
+                                                    {/* Barre d'action supérieure (Changement MDP) */}
+                                                    <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex flex-wrap gap-4 justify-between items-center bg-white/50 dark:bg-[#1e1e1e]/50">
+                                                        <span className="text-sm font-medium text-gray-600 dark:text-gray-300">Gestion et accès</span>
+                                                        <button 
+                                                            onClick={() => handleResetPassword(student.id, student.username)}
+                                                            className="flex items-center gap-2 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                                                        >
+                                                            <Key size={16} /> Forcer nouveau mot de passe
                                                         </button>
                                                     </div>
-                                                ))}
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            );
-                        })}
+
+                                                    {/* Liste des Notebooks sous forme de Table */}
+                                                    {studentNotebooks.length === 0 ? (
+                                                        <div className="p-8 text-center text-sm text-gray-500 italic">
+                                                            Cet élève n'a créé aucun notebook.
+                                                        </div>
+                                                    ) : (
+                                                        <div className="overflow-x-auto">
+                                                            <table className="w-full text-left border-collapse">
+                                                                <thead className="bg-gray-50 dark:bg-[#1a1a1a] border-b border-gray-200 dark:border-gray-800">
+                                                                    <tr>
+                                                                        <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Titre</th>
+                                                                        <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Propriétaire</th>
+                                                                        <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Code / Source</th>
+                                                                        <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Actions</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody className="divide-y divide-gray-100 dark:divide-gray-800/50">
+                                                                    {studentNotebooks.map(nb => (
+                                                                        <tr key={nb.id} className="hover:bg-gray-50 dark:hover:bg-[#252525] transition-colors">
+                                                                            <td className="p-4">
+                                                                                <div className="font-medium text-gray-900 dark:text-white text-sm flex items-center gap-2 max-w-[200px] sm:max-w-[300px] truncate" title={nb.title}>
+                                                                                    <BookOpen size={14} className="text-gray-400 flex-shrink-0"/> <span className="truncate">{nb.title}</span>
+                                                                                </div>
+                                                                            </td>
+                                                                            <td className="p-4 text-sm text-gray-600 dark:text-gray-300">
+                                                                                {student.username}
+                                                                            </td>
+                                                                            <td className="p-4">
+                                                                                {nb.templateSourceId ? (
+                                                                                    <span className="inline-block text-[10px] text-emerald-600 bg-emerald-100 dark:bg-emerald-900/30 dark:text-emerald-400 px-2 py-1 rounded font-bold uppercase tracking-wide">Copie d'exercice</span>
+                                                                                ) : (
+                                                                                    <span className="inline-block text-[10px] text-gray-500 bg-gray-100 dark:bg-gray-800 dark:text-gray-400 px-2 py-1 rounded font-bold uppercase tracking-wide">Projet Perso</span>
+                                                                                )}
+                                                                            </td>
+                                                                            <td className="p-4 flex justify-end gap-2">
+                                                                                <button onClick={() => openNotebook(nb.id)} className="text-sm bg-gray-100 dark:bg-gray-800 hover:bg-emerald-100 hover:text-emerald-700 dark:hover:bg-emerald-900/50 dark:hover:text-emerald-400 text-gray-700 dark:text-gray-300 px-3 py-1.5 rounded transition-colors font-medium">Ouvrir</button>
+                                                                                <button onClick={() => handleDeleteNotebook(nb.id, nb.title)} className="bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 p-1.5 rounded transition-colors" title="Supprimer ce notebook"><Trash2 size={16} /></button>
+                                                                            </td>
+                                                                        </tr>
+                                                                    ))}
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )
+                                })}
+                            </div>
+                        )}
                     </div>
                 )}
 
