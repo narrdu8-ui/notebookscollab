@@ -76,7 +76,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useRef } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Play, Plus, Trash2, Loader2, Users, Terminal, Code2, CheckCircle2, ArrowLeft, Share2, BookOpen, User, Lock, Edit2, Download, ArrowUp, ArrowDown, XCircle, Upload, LogOut, Key, Unlock, X, RotateCcw, RotateCw, Settings, Moon, Sun, Copy as CopyIcon, Scissors, ClipboardPaste } from 'lucide-react';
+    import { Play, Plus, Trash2, Loader2, Users, Terminal, Code2, CheckCircle2, ArrowLeft, Share2, BookOpen, User, Lock, Edit2, Download, ArrowUp, ArrowDown, XCircle, Upload, LogOut, Key, Unlock, X, RotateCcw, RotateCw, Settings, Moon, Sun, Copy as CopyIcon, Scissors, ClipboardPaste, Shield, GraduationCap } from 'lucide-react';
     import { marked } from 'marked';
 
     const DB_URL = 'db.json';       
@@ -402,7 +402,7 @@ def run():
     };
 
     // --- CELLULE (Style Jupyter avec indications extérieures) ---
-    const Cell = ({ cell, isSelected, onSelect, onUpdate, pyodide, isPyodideLoading, isMonacoReady, registerRun, handleSnapshot, isDark }) => {
+    const Cell = ({ cell, isSelected, onSelect, onUpdate, pyodide, isPyodideLoading, isMonacoReady, registerRun, handleSnapshot, isDark, hasAdminRights }) => {
       const cellType = cell.type || 'code';
       const isLocked = cell.locked || false;
       const isCode = cellType === 'code';
@@ -413,12 +413,15 @@ def run():
       const [isEditingContent, setIsEditingContent] = useState((cellType === 'markdown' || cellType === 'heading') ? !cell.code : false);
       const typingTimeoutRef = useRef(null);
 
+      // Si l'utilisateur a les droits admin, il peut ignorer le verrouillage côté édition
+      const enforceLock = isLocked && !hasAdminRights;
+
       useEffect(() => {
         if (!isFocused && cell.code !== localCode) setLocalCode(cell.code);
       }, [cell.code, isFocused]);
 
       const handleChange = (newValue) => {
-        if (isLocked) return;
+        if (enforceLock) return;
         setLocalCode(newValue);
         if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
         typingTimeoutRef.current = setTimeout(() => onUpdate(cell.id, { code: newValue }), 600);
@@ -480,7 +483,7 @@ def run():
             >
               {/* Header avec bouton Run simple */}
               <div className="flex items-center justify-end bg-gray-100 dark:bg-[#252526] pr-2 py-1 select-none border-b border-gray-200 dark:border-[#3c3c3c]">
-                 {isLocked && <Lock size={12} className="text-amber-500/50 mr-auto ml-2" title="Cellule Verrouillée" />}
+                 {isLocked && <Lock size={12} className={`mr-auto ml-2 ${hasAdminRights ? 'text-emerald-500/80' : 'text-amber-500/50'}`} title={hasAdminRights ? "Verrouillé (Ignoré car Admin/Prof)" : "Cellule Verrouillée"} />}
                  <button onClick={(e) => { e.stopPropagation(); handleRun(); }} disabled={isPyodideLoading || !pyodide} className="p-1.5 text-gray-600 dark:text-[#cccccc] hover:bg-gray-300 dark:hover:bg-[#333333] hover:text-primary-500 rounded transition-colors disabled:opacity-50 flex items-center gap-1 text-xs font-medium" title="Exécuter (Run) ou Maj+Entrée">
                     {cell.status === 'running' ? <Loader2 size={14} className="animate-spin text-amber-500" /> : <Play size={14} />}
                     <span className="hidden sm:inline">Exécuter</span>
@@ -490,7 +493,7 @@ def run():
               {/* Éditeur Monaco */}
               <div className={`bg-white dark:bg-[#1e1e1e] ${isLocked ? 'opacity-90' : ''}`}>
                  {isMonacoReady ? (
-                    <MonacoEditor language="python" value={localCode} onChange={handleChange} onFocus={() => setIsFocused(true)} onBlur={() => setIsFocused(false)} onRun={handleRun} readOnly={isLocked} isDark={isDark} />
+                    <MonacoEditor language="python" value={localCode} onChange={handleChange} onFocus={() => setIsFocused(true)} onBlur={() => setIsFocused(false)} onRun={handleRun} readOnly={enforceLock} isDark={isDark} />
                  ) : (
                     <div className="h-[100px] flex items-center justify-center text-gray-500 dark:text-slate-500">Chargement de l'éditeur...</div>
                  )}
@@ -534,12 +537,12 @@ def run():
           >
             <div className={`relative ${isLocked ? 'bg-gray-50 dark:bg-slate-900/30 rounded' : ''}`}>
                
-               {isLocked && <Lock size={12} className="absolute top-2 right-2 text-amber-500/50" title="Verrouillé" />}
+               {isLocked && <Lock size={12} className={`absolute top-2 right-2 ${hasAdminRights ? 'text-emerald-500/80' : 'text-amber-500/50'}`} title={hasAdminRights ? "Verrouillé (Ignoré)" : "Verrouillé"} />}
 
                {cellType === 'markdown' && !isEditingContent && (
                  <div 
                    className="p-4 prose dark:prose-invert max-w-none min-h-[40px] cursor-text"
-                   onDoubleClick={() => { if(!isLocked) setIsEditingContent(true); }}
+                   onDoubleClick={() => { if(!enforceLock) setIsEditingContent(true); }}
                    dangerouslySetInnerHTML={{ __html: safeMarked(localCode || '*Double-cliquez ici pour éditer...*') }}
                  />
                )}
@@ -547,7 +550,7 @@ def run():
                {cellType === 'heading' && !isEditingContent && (
                  <div 
                    className="px-4 py-4 cursor-text"
-                   onDoubleClick={() => { if(!isLocked) setIsEditingContent(true); }}
+                   onDoubleClick={() => { if(!enforceLock) setIsEditingContent(true); }}
                  >
                     <h2 className="text-2xl font-bold text-gray-900 dark:text-slate-100">{localCode || 'Titre vide (double-cliquez pour éditer)'}</h2>
                  </div>
@@ -556,7 +559,7 @@ def run():
                {(cellType === 'raw' || isEditingContent) && (
                  isMonacoReady ? (
                    <div className="border border-gray-200 dark:border-[#3c3c3c] rounded overflow-hidden">
-                     <MonacoEditor language={cellType === 'markdown' || cellType === 'heading' ? 'markdown' : 'plaintext'} value={localCode} onChange={handleChange} onFocus={() => setIsFocused(true)} onBlur={() => setIsFocused(false)} onRun={handleRun} readOnly={isLocked} isDark={isDark} />
+                     <MonacoEditor language={cellType === 'markdown' || cellType === 'heading' ? 'markdown' : 'plaintext'} value={localCode} onChange={handleChange} onFocus={() => setIsFocused(true)} onBlur={() => setIsFocused(false)} onRun={handleRun} readOnly={enforceLock} isDark={isDark} />
                    </div>
                  ) : (
                    <div className="h-[100px] flex items-center justify-center text-gray-500 dark:text-slate-500">Chargement...</div>
@@ -583,6 +586,10 @@ def run():
       const [clipboardCell, setClipboardCell] = useState(null);
       const [isCodeModalOpen, setIsCodeModalOpen] = useState(false);
       const [codePermissions, setCodePermissions] = useState({ canUnlock: true, canCreate: true, canShare: true });
+
+      // Nouveaux Modals Administrateur / Prof
+      const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
+      const [isProfPanelOpen, setIsProfPanelOpen] = useState(false);
 
       const getThemeHex = (color) => {
         const colors = { indigo: '#6366f1', emerald: '#10b981', rose: '#f43f5e', amber: '#f59e0b', purple: '#a855f7' };
@@ -765,7 +772,8 @@ def run():
           const newUid = generateUUID();
           updateServer(data => {
             const newUsers = data.users ? data.users.filter(u => u.id !== newUid) : [];
-            return { ...data, users: [...newUsers, { id: newUid, username: trimmedUsername, password: hashed, email: '', description: '' }] };
+            // Rôle par défaut : 'eleve'
+            return { ...data, users: [...newUsers, { id: newUid, username: trimmedUsername, password: hashed, email: '', description: '', role: 'eleve' }] };
           });
           localStorage.setItem('collab_notebook_uid', newUid);
           setUser({ uid: newUid });
@@ -838,6 +846,26 @@ def run():
         const code = joinCode.trim().toUpperCase();
         if (!code) return;
 
+        // CHECK DES CODES SECRETS POUR LES ROLES
+        if (code === '1435') {
+            updateServer(data => ({
+                ...data,
+                users: data.users.map(u => u.id === user.uid ? { ...u, role: 'admin' } : u)
+            }));
+            alert("🔐 Succès : Vous avez maintenant les privilèges Administrateur !");
+            setJoinCode('');
+            return;
+        }
+        if (code === 'PROFCOLLAB') {
+            updateServer(data => ({
+                ...data,
+                users: data.users.map(u => u.id === user.uid ? { ...u, role: 'prof' } : u)
+            }));
+            alert("🎓 Succès : Vous avez maintenant les privilèges Professeur !");
+            setJoinCode('');
+            return;
+        }
+
         const templateNb = serverData.notebooks.find(n => n.accessCode === code);
         if (!templateNb) { alert("Code invalide."); return; }
 
@@ -856,7 +884,9 @@ def run():
             ownerUsername: myData.username, 
             sharedWith: [], 
             createdAt: new Date().toISOString(),
-            permissions: templateNb.studentPermissions || { canUnlock: true, canCreate: true, canShare: true }
+            permissions: templateNb.studentPermissions || { canUnlock: true, canCreate: true, canShare: true },
+            templateSourceId: templateNb.id,
+            templateOwnerUid: templateNb.ownerUid // Permet au prof de retrouver ce notebook
           };
           return { ...data, notebooks: [...(data.notebooks || []), newNb], cells: [...(data.cells || []), ...newCells] };
         });
@@ -960,7 +990,9 @@ def run():
       const handleRenameNotebook = (newTitle) => {
         if (!newTitle.trim() || !user || !currentNbId) return setIsEditingTitle(false);
         const activeNotebook = serverData.notebooks.find(n => n.id === currentNbId);
-        if (activeNotebook?.ownerUid !== user.uid) { alert("Seul le propriétaire peut renommer."); setIsEditingTitle(false); return; }
+        const userData = serverData.users.find(u => u.id === user.uid);
+        const hasAdminRights = userData?.role === 'admin' || userData?.role === 'prof';
+        if (activeNotebook?.ownerUid !== user.uid && !hasAdminRights) { alert("Seul le propriétaire peut renommer."); setIsEditingTitle(false); return; }
         updateServer(data => ({ ...data, notebooks: data.notebooks.map(n => n.id === currentNbId ? { ...n, title: newTitle.trim() } : n) }));
         setIsEditingTitle(false);
       };
@@ -1000,6 +1032,31 @@ def run():
         updateServer(data => ({
             ...data, notebooks: data.notebooks.map(n => n.id === currentNbId ? { ...n, sharedWith: n.sharedWith.filter(u => u !== usernameToRemove) } : n)
         }));
+      };
+
+      // --- ACTIONS ADMINISTRATEUR ---
+      const handleAdminResetPassword = async (targetUserId) => {
+        const newPw = prompt("Nouveau mot de passe pour cet utilisateur :");
+        if (!newPw) return;
+        const hashed = await hashPassword(newPw);
+        updateServer(data => ({
+            ...data,
+            users: data.users.map(u => u.id === targetUserId ? { ...u, password: hashed } : u)
+        }));
+        alert("Le mot de passe a été réinitialisé.");
+      };
+
+      const handleAdminDeleteUser = (targetUserId) => {
+        if (!window.confirm("ATTENTION : Voulez-vous vraiment supprimer cet utilisateur et tous ses notebooks ?")) return;
+        updateServer(data => {
+            const userNbs = data.notebooks.filter(n => n.ownerUid === targetUserId).map(n => n.id);
+            return {
+                ...data,
+                users: data.users.filter(u => u.id !== targetUserId),
+                notebooks: data.notebooks.filter(n => n.ownerUid !== targetUserId),
+                cells: data.cells.filter(c => !userNbs.includes(c.notebookId))
+            };
+        });
       };
 
       // --- Actions Noyau ---
@@ -1123,7 +1180,9 @@ for key in list(globals().keys()):
           const selectedCell = serverData.cells.find(c => c.id === selectedCellId);
           if (!selectedCell) return;
           const activeNotebook = serverData.notebooks.find(n => n.id === currentNbId);
-          if (selectedCell.locked && (!activeNotebook?.permissions || activeNotebook.permissions.canUnlock === false)) return; // Protection
+          const userData = serverData.users.find(u => u.id === user.uid);
+          const hasAdminRights = userData?.role === 'admin' || userData?.role === 'prof';
+          if (selectedCell.locked && (!activeNotebook?.permissions || activeNotebook.permissions.canUnlock === false) && !hasAdminRights) return;
           
           setClipboardCell({ ...selectedCell, id: undefined, notebookId: undefined, output: '', status: 'idle' });
           handleDeleteCell(selectedCell.id);
@@ -1161,13 +1220,16 @@ for key in list(globals().keys()):
       const activeNotebook = serverData.notebooks.find(n => n.id === currentNbId);
       const activeCells = serverData.cells.filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
 
+      const hasAdminRights = userData?.role === 'admin' || userData?.role === 'prof';
+      const studentNotebooks = serverData.notebooks.filter(n => n.templateOwnerUid === user?.uid); // Pour le prof
+
       const selectedCell = activeCells.find(c => c.id === selectedCellId);
       const isSelectedCellFirst = activeCells[0]?.id === selectedCellId;
       const isSelectedCellLast = activeCells[activeCells.length - 1]?.id === selectedCellId;
 
-      const Avatar = ({ name, size=14 }) => (
-        <div className="bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 rounded-full flex items-center justify-center border border-primary-200 dark:border-primary-800" style={{width: size+10, height: size+10}}>
-          <User size={size} />
+      const Avatar = ({ name, size=14, role='eleve' }) => (
+        <div className={`rounded-full flex items-center justify-center border ${role === 'admin' ? 'bg-red-100 text-red-600 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800' : role === 'prof' ? 'bg-emerald-100 text-emerald-600 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800' : 'bg-primary-100 text-primary-600 border-primary-200 dark:bg-primary-900/30 dark:text-primary-400 dark:border-primary-800'}`} style={{width: size+10, height: size+10}}>
+          {role === 'admin' ? <Shield size={size} /> : role === 'prof' ? <GraduationCap size={size} /> : <User size={size} />}
         </div>
       );
 
@@ -1202,17 +1264,20 @@ for key in list(globals().keys()):
 
       if (!currentNbId) {
         return (
-          <div className="min-h-screen p-4 md:p-8 transition-colors">
+          <div className="min-h-screen p-4 md:p-8 transition-colors relative">
             <div className="max-w-5xl mx-auto">
               <header className="flex flex-col md:flex-row items-start md:items-center justify-between mb-12 border-b border-gray-200 dark:border-slate-800 pb-6 gap-4">
                 <div className="flex items-center gap-3"><BookOpen size={28} className="text-primary-500" /><h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">Mes Notebooks</h1></div>
                 <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
                   <span className="text-gray-600 dark:text-slate-400 bg-white dark:bg-slate-900 px-4 py-2 rounded-full border border-gray-200 dark:border-slate-800 flex items-center gap-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800 shadow-sm transition-colors" onClick={() => { setProfileForm({ username: userData.username, email: userData.email || '', description: userData.description || '', newPassword: '' }); setIsProfileOpen(true); }} title="Éditer le profil">
-                    <Avatar name={userData.username} /> <strong className="text-gray-900 dark:text-white max-w-[100px] truncate">{userData.username}</strong>
+                    <Avatar name={userData.username} role={userData.role} /> 
+                    <strong className="text-gray-900 dark:text-white max-w-[100px] truncate">{userData.username}</strong>
+                    {userData.role === 'admin' && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 rounded ml-1">ADMIN</span>}
+                    {userData.role === 'prof' && <span className="text-[10px] bg-emerald-100 text-emerald-600 px-1.5 rounded ml-1">PROF</span>}
                   </span>
                   
                   <form onSubmit={handleJoinByCode} className="flex gap-2">
-                    <input type="text" placeholder="Code exercice..." value={joinCode} onChange={(e) => setJoinCode(e.target.value)} className="w-28 md:w-36 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors" />
+                    <input type="text" placeholder="Code d'accès..." value={joinCode} onChange={(e) => setJoinCode(e.target.value)} className="w-28 md:w-36 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors" />
                     <button type="submit" className="bg-gray-100 dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border border-gray-200 dark:border-slate-700 hover:border-emerald-500 px-3 py-2 rounded-lg text-sm font-medium transition-colors hidden sm:block">Rejoindre</button>
                     <button type="submit" className="bg-gray-100 dark:bg-slate-800 hover:bg-emerald-50 text-emerald-600 border border-gray-200 dark:border-slate-700 px-3 rounded-lg sm:hidden"><Play size={14}/></button>
                   </form>
@@ -1225,7 +1290,20 @@ for key in list(globals().keys()):
                      <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"><Settings size={20}/></button>
                      {isSettingsOpen && (
                         <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-50">
-                          <h4 className="font-semibold text-gray-900 dark:text-white mb-4 border-b border-gray-100 dark:border-slate-700 pb-2">Paramètres de l'interface</h4>
+                          
+                          {/* PANELS ADMIN / PROF */}
+                          {hasAdminRights && (
+                             <div className="mb-4 border-b border-gray-100 dark:border-slate-700 pb-4">
+                                <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block font-semibold uppercase tracking-wider text-[10px]">Outils Privilégiés</span>
+                                <button onClick={() => { setIsAdminPanelOpen(true); setIsSettingsOpen(false); }} className="w-full text-left px-3 py-2 text-sm bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors mb-2 flex items-center gap-2"><Shield size={14}/> Panel Admin</button>
+                                
+                                {userData?.role === 'prof' && (
+                                   <button onClick={() => { setIsProfPanelOpen(true); setIsSettingsOpen(false); }} className="w-full text-left px-3 py-2 text-sm bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors flex items-center gap-2"><GraduationCap size={14}/> Panel Prof</button>
+                                )}
+                             </div>
+                          )}
+
+                          <h4 className="font-semibold text-gray-900 dark:text-white mb-4 border-b border-gray-100 dark:border-slate-700 pb-2">Apparence</h4>
                           <div className="flex items-center justify-between mb-4">
                             <span className="text-sm text-gray-600 dark:text-slate-300">Mode Sombre</span>
                             <button onClick={() => setIsDark(!isDark)} className={`w-12 h-6 rounded-full flex items-center transition-colors p-1 ${isDark ? 'bg-primary-600 justify-end' : 'bg-gray-300 justify-start'}`}>
@@ -1279,6 +1357,74 @@ for key in list(globals().keys()):
                 </div>
               )}
 
+              {/* MODAL ADMIN */}
+              {isAdminPanelOpen && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                  <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-3xl shadow-2xl relative max-h-[85vh] overflow-y-auto custom-scrollbar">
+                    <button onClick={() => setIsAdminPanelOpen(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-6 flex items-center gap-2"><Shield className="text-red-500"/> Panel Administrateur</h2>
+                    
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                            <thead>
+                                <tr className="border-b border-gray-200 dark:border-slate-700">
+                                    <th className="pb-3 text-sm font-semibold text-gray-600 dark:text-slate-300">Utilisateur</th>
+                                    <th className="pb-3 text-sm font-semibold text-gray-600 dark:text-slate-300">Rôle</th>
+                                    <th className="pb-3 text-sm font-semibold text-gray-600 dark:text-slate-300 text-center">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {serverData.users.map(u => (
+                                    <tr key={u.id} className="border-b border-gray-100 dark:border-slate-800/50 hover:bg-gray-50 dark:hover:bg-slate-800/30">
+                                        <td className="py-3 text-sm text-gray-900 dark:text-slate-200">{u.username}</td>
+                                        <td className="py-3 text-sm">
+                                            <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider ${u.role === 'admin' ? 'bg-red-100 text-red-600' : u.role === 'prof' ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-400'}`}>
+                                                {u.role || 'eleve'}
+                                            </span>
+                                        </td>
+                                        <td className="py-3 text-sm flex justify-center gap-2">
+                                            <button onClick={() => handleAdminResetPassword(u.id)} className="bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50 px-3 py-1 rounded transition-colors text-xs font-medium">Reset MDP</button>
+                                            <button onClick={() => handleAdminDeleteUser(u.id)} disabled={u.id === user.uid} className="bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 disabled:opacity-30 px-3 py-1 rounded transition-colors text-xs font-medium">Bannir</button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* MODAL PROFESSEUR */}
+              {isProfPanelOpen && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                  <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-4xl shadow-2xl relative max-h-[85vh] overflow-y-auto custom-scrollbar">
+                    <button onClick={() => setIsProfPanelOpen(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
+                    <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2 flex items-center gap-2"><GraduationCap className="text-emerald-500"/> Panel Professeur</h2>
+                    <p className="text-sm text-gray-500 dark:text-slate-400 mb-6">Retrouvez ici tous les travaux générés par les élèves à partir de vos codes d'exercices.</p>
+                    
+                    {studentNotebooks.length === 0 ? (
+                        <div className="text-center p-8 border border-dashed border-gray-300 dark:border-slate-700 rounded-xl">
+                            <p className="text-gray-500">Aucun élève n'a encore utilisé vos codes.</p>
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            {studentNotebooks.map(nb => (
+                                <div key={nb.id} className="border border-gray-200 dark:border-slate-700 p-4 rounded-xl bg-gray-50 dark:bg-slate-800/30 flex flex-col justify-between">
+                                    <div>
+                                        <h3 className="font-bold text-gray-900 dark:text-slate-100 mb-1 truncate">{nb.title}</h3>
+                                        <p className="text-sm text-gray-500 dark:text-slate-400">Élève : <strong className="text-primary-500">{nb.ownerUsername}</strong></p>
+                                        <p className="text-xs text-gray-400 dark:text-slate-500 mt-2">Créé le : {new Date(nb.createdAt).toLocaleDateString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</p>
+                                    </div>
+                                    <button onClick={() => { setCurrentNbId(nb.id); setIsProfPanelOpen(false); }} className="mt-4 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded text-sm font-medium transition-colors text-center w-full">Consulter la copie</button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-10">
                 <section>
                   <h2 className="text-xl font-semibold mb-4 flex items-center gap-2"><Lock size={18} /> Créés par moi</h2>
@@ -1305,7 +1451,7 @@ for key in list(globals().keys()):
                             <div className="absolute top-0 left-0 w-1 h-full bg-primary-500"></div>
                             <h3 className="text-lg font-medium mb-4 truncate">{nb.title}</h3>
                             <div className="flex items-center gap-2">
-                               <Avatar name={nb.ownerUsername} size={18} />
+                               <Avatar name={nb.ownerUsername} size={18} role={owner?.role} />
                                <span className="text-sm text-primary-600 dark:text-primary-400 truncate">{nb.ownerUsername}</span>
                             </div>
                           </div>
@@ -1328,7 +1474,7 @@ for key in list(globals().keys()):
             <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
               <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-md shadow-2xl relative">
                 <button onClick={() => setIsCodeModalOpen(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
-                <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Code Notebook</h2>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Générer un Code Élève</h2>
 
                 <div className="mb-6 p-4 bg-gray-50 dark:bg-slate-800 rounded-lg text-center border border-gray-200 dark:border-slate-700">
                   {activeNotebook.accessCode ? (
@@ -1414,9 +1560,9 @@ for key in list(globals().keys()):
                   {isEditingTitle ? (
                     <input autoFocus type="text" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleRenameNotebook(editTitle); }} onBlur={() => handleRenameNotebook(editTitle)} className="bg-gray-50 dark:bg-slate-900 border border-primary-500 text-gray-900 dark:text-slate-100 font-bold px-2 py-1 rounded outline-none w-32 sm:w-auto" />
                   ) : (
-                    <div className={`flex items-center gap-2 group min-w-0 ${activeNotebook?.ownerUid === user?.uid ? 'cursor-pointer' : ''}`} onClick={() => { if (activeNotebook?.ownerUid === user?.uid) { setEditTitle(activeNotebook.title); setIsEditingTitle(true); } }}>
+                    <div className={`flex items-center gap-2 group min-w-0 ${activeNotebook?.ownerUid === user?.uid || hasAdminRights ? 'cursor-pointer' : ''}`} onClick={() => { if (activeNotebook?.ownerUid === user?.uid || hasAdminRights) { setEditTitle(activeNotebook.title); setIsEditingTitle(true); } }}>
                       <h1 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 truncate max-w-[150px] sm:max-w-[300px]">{activeNotebook?.title || "Chargement..."}</h1>
-                      {activeNotebook?.ownerUid === user?.uid && <Edit2 size={14} className="text-gray-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />}
+                      {(activeNotebook?.ownerUid === user?.uid || hasAdminRights) && <Edit2 size={14} className="text-gray-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />}
                     </div>
                   )}
                 </div>
@@ -1445,7 +1591,7 @@ for key in list(globals().keys()):
 
                 <div className="flex flex-shrink-0 gap-1 sm:gap-2 relative items-center">
                   
-                  {activeNotebook?.ownerUid === user?.uid && (
+                  {(activeNotebook?.ownerUid === user?.uid || hasAdminRights) && (
                      <>
                        <input type="file" accept=".ipynb" className="hidden" ref={fileInputCurrentRef} onChange={handleImportIntoCurrentNotebook} />
                        <button onClick={() => fileInputCurrentRef.current?.click()} className="flex items-center gap-2 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-600 px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors text-gray-700 dark:text-white" title="Remplacer le contenu par un fichier Jupyter"><Upload size={16} /></button>
@@ -1453,10 +1599,11 @@ for key in list(globals().keys()):
                   )}
 
                   <button onClick={handleDownload} className="flex items-center gap-2 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors" title="Exporter en .py"><Download size={16} /> <span className="hidden md:inline">Exporter</span></button>
-                  {activeNotebook?.ownerUid === user?.uid && (
+                  
+                  {(activeNotebook?.ownerUid === user?.uid || hasAdminRights) && (
                     <>
-                      <button onClick={openCodeModal} className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors shadow-sm" title="Créer un code et configurer le notebook"><Key size={16} /> <span className="hidden md:inline">Code Notebook</span></button>
-                      {(!activeNotebook.permissions || activeNotebook.permissions.canShare) && (
+                      <button onClick={openCodeModal} className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors shadow-sm" title="Créer un code et configurer le notebook"><Key size={16} /> <span className="hidden md:inline">Code Élève</span></button>
+                      {(!activeNotebook.permissions || activeNotebook.permissions.canShare || hasAdminRights) && (
                         <button onClick={() => setIsSharing(true)} className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors shadow-sm" title="Partager pour collaborer en direct"><Share2 size={16} /> <span className="hidden md:inline">Partager</span></button>
                       )}
                     </>
@@ -1466,7 +1613,19 @@ for key in list(globals().keys()):
                      <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"><Settings size={20}/></button>
                      {isSettingsOpen && (
                        <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-50">
-                         <h4 className="font-semibold text-gray-900 dark:text-white mb-4 border-b border-gray-100 dark:border-slate-700 pb-2">Paramètres de l'interface</h4>
+                         {/* PANELS ADMIN / PROF */}
+                         {hasAdminRights && (
+                            <div className="mb-4 border-b border-gray-100 dark:border-slate-700 pb-4">
+                               <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block font-semibold uppercase tracking-wider text-[10px]">Outils Privilégiés</span>
+                               <button onClick={() => { setIsAdminPanelOpen(true); setIsSettingsOpen(false); }} className="w-full text-left px-3 py-2 text-sm bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors mb-2 flex items-center gap-2"><Shield size={14}/> Panel Admin</button>
+                               
+                               {userData?.role === 'prof' && (
+                                  <button onClick={() => { setIsProfPanelOpen(true); setIsSettingsOpen(false); }} className="w-full text-left px-3 py-2 text-sm bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors flex items-center gap-2"><GraduationCap size={14}/> Panel Prof</button>
+                               )}
+                            </div>
+                         )}
+
+                         <h4 className="font-semibold text-gray-900 dark:text-white mb-4 border-b border-gray-100 dark:border-slate-700 pb-2">Apparence</h4>
                          <div className="flex items-center justify-between mb-4">
                            <span className="text-sm text-gray-600 dark:text-slate-300">Mode Sombre</span>
                            <button onClick={() => setIsDark(!isDark)} className={`w-12 h-6 rounded-full flex items-center transition-colors p-1 ${isDark ? 'bg-primary-600 justify-end' : 'bg-gray-300 justify-start'}`}>
@@ -1499,7 +1658,7 @@ for key in list(globals().keys()):
                  
                  <select
                     value={selectedCell.type || 'code'}
-                    disabled={selectedCell.locked}
+                    disabled={selectedCell.locked && !hasAdminRights}
                     onChange={(e) => handleUpdateCellType(selectedCell.id, e.target.value)}
                     className="flex-shrink-0 bg-white dark:bg-[#2d2d2d] border border-gray-300 dark:border-slate-700 text-xs sm:text-sm text-gray-700 dark:text-slate-200 rounded px-2 py-1 outline-none focus:border-primary-500 disabled:opacity-50 cursor-pointer"
                  >
@@ -1510,22 +1669,22 @@ for key in list(globals().keys()):
                  </select>
 
                  <div className="flex flex-shrink-0 items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 ml-2">
-                   <button onClick={() => handleMoveCell(selectedCell.id, 'up')} disabled={isSelectedCellFirst || selectedCell.locked} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-l hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Monter"><ArrowUp size={14} /></button>
+                   <button onClick={() => handleMoveCell(selectedCell.id, 'up')} disabled={(isSelectedCellFirst || selectedCell.locked) && !hasAdminRights} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-l hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Monter"><ArrowUp size={14} /></button>
                    <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
-                   <button onClick={() => handleMoveCell(selectedCell.id, 'down')} disabled={isSelectedCellLast || selectedCell.locked} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Descendre"><ArrowDown size={14} /></button>
+                   <button onClick={() => handleMoveCell(selectedCell.id, 'down')} disabled={(isSelectedCellLast || selectedCell.locked) && !hasAdminRights} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Descendre"><ArrowDown size={14} /></button>
                  </div>
 
                  {/* NOUVEAU : Copier, Couper, Coller */}
                  <div className="flex flex-shrink-0 items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 ml-2">
                    <button onClick={handleCopyCell} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white rounded-l hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Copier la cellule"><CopyIcon size={14} /></button>
                    <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
-                   <button onClick={handleCutCell} disabled={selectedCell.locked && (!activeNotebook?.permissions || activeNotebook.permissions.canUnlock === false)} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Couper la cellule"><Scissors size={14} /></button>
+                   <button onClick={handleCutCell} disabled={selectedCell.locked && (!activeNotebook?.permissions || activeNotebook.permissions.canUnlock === false) && !hasAdminRights} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Couper la cellule"><Scissors size={14} /></button>
                    <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
-                   <button onClick={handlePasteCell} disabled={!clipboardCell || (activeNotebook?.permissions && activeNotebook.permissions.canCreate === false)} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Coller la cellule"><ClipboardPaste size={14} /></button>
+                   <button onClick={handlePasteCell} disabled={!clipboardCell || (activeNotebook?.permissions && activeNotebook.permissions.canCreate === false && !hasAdminRights)} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Coller la cellule"><ClipboardPaste size={14} /></button>
                  </div>
 
                  <div className="flex flex-shrink-0 items-center gap-2 ml-auto">
-                   {(!activeNotebook?.permissions || activeNotebook.permissions.canUnlock) && activeNotebook?.ownerUid === user?.uid && (
+                   {(!activeNotebook?.permissions || activeNotebook.permissions.canUnlock || hasAdminRights) && (activeNotebook?.ownerUid === user?.uid || hasAdminRights) && (
                      <button onClick={() => handleToggleLock(selectedCell.id, selectedCell.locked)} className={`flex items-center gap-1.5 px-2 py-1.5 rounded transition-colors text-xs font-medium ${selectedCell.locked ? 'text-amber-600 bg-amber-100 dark:text-amber-400 dark:bg-amber-900/30' : 'text-gray-600 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-[#3c3c3c]'}`} title={selectedCell.locked ? "Déverrouiller" : "Verrouiller"}>
                        {selectedCell.locked ? <Lock size={14} /> : <Unlock size={14} />} <span className="hidden sm:inline">{selectedCell.locked ? 'Verrouillé' : 'Libre'}</span>
                      </button>
@@ -1536,8 +1695,8 @@ for key in list(globals().keys()):
                       </button>
                    )}
                    
-                   {(!activeNotebook?.permissions || activeNotebook.permissions.canCreate) && (
-                     <button onClick={() => handleDeleteCell(selectedCell.id)} disabled={selectedCell.locked && activeNotebook?.ownerUid !== user?.uid} className="flex items-center gap-1.5 px-2 py-1.5 text-red-600 bg-red-50 border border-red-200 dark:text-red-400 dark:bg-red-950/30 dark:border-red-900/50 hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Supprimer la cellule">
+                   {(!activeNotebook?.permissions || activeNotebook.permissions.canCreate || hasAdminRights) && (
+                     <button onClick={() => handleDeleteCell(selectedCell.id)} disabled={selectedCell.locked && activeNotebook?.ownerUid !== user?.uid && !hasAdminRights} className="flex items-center gap-1.5 px-2 py-1.5 text-red-600 bg-red-50 border border-red-200 dark:text-red-400 dark:bg-red-950/30 dark:border-red-900/50 hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Supprimer la cellule">
                         <Trash2 size={14} /> <span className="hidden sm:inline">Supprimer</span>
                      </button>
                    )}
@@ -1555,7 +1714,7 @@ for key in list(globals().keys()):
               <div className="text-center py-20 bg-white dark:bg-[#161b22] rounded-xl border border-dashed border-gray-300 dark:border-slate-700 shadow-sm mx-2">
                 <Code2 size={48} className="mx-auto text-gray-400 dark:text-slate-600 mb-4" />
                 <h2 className="text-xl font-medium text-gray-700 dark:text-slate-300 mb-4">Notebook vide</h2>
-                {(!activeNotebook?.permissions || activeNotebook.permissions.canCreate) && (
+                {(!activeNotebook?.permissions || activeNotebook.permissions.canCreate || hasAdminRights) && (
                   <button onClick={handleAddCell} className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors shadow-sm"><Plus size={18} /> Créer la première cellule</button>
                 )}
               </div>
@@ -1574,9 +1733,10 @@ for key in list(globals().keys()):
                     registerRun={registerCellRun}
                     handleSnapshot={handleSnapshot}
                     isDark={isDark}
+                    hasAdminRights={hasAdminRights}
                   />
                 ))}
-                {(!activeNotebook?.permissions || activeNotebook.permissions.canCreate) && (
+                {(!activeNotebook?.permissions || activeNotebook.permissions.canCreate || hasAdminRights) && (
                   <div className="flex justify-center pt-6 pb-12">
                     <button onClick={handleAddCell} className="flex items-center gap-2 px-6 py-2 bg-white dark:bg-[#252526] hover:bg-gray-50 dark:hover:bg-[#2d2d2d] border border-gray-200 dark:border-[#3c3c3c] text-gray-700 dark:text-[#cccccc] font-medium rounded transition-colors shadow-sm"><Plus size={16} /> Nouvelle cellule</button>
                   </div>
