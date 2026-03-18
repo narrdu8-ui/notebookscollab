@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="fr" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Collab - Administration</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { darkMode: 'class', theme: { extend: { colors: { primary: { 500: 'var(--color-primary-500)', 600: 'var(--color-primary-600)', 700: 'var(--color-primary-700)' } } } } }
+  </script>
+
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    :root { --color-primary-500: #ef4444; --color-primary-600: #dc2626; --color-primary-700: #b91c1c; } /* Rouge par défaut pour l'admin */
+  </style>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.292.0?deps=react@18.2.0"
+      }
+    }
+  </script>
+</head>
+<body class="bg-gray-50 dark:bg-[#121212] text-slate-900 dark:text-[#cccccc] m-0 p-0 font-sans">
+  
+  <div id="root">
+     <div style="display:flex; height:100vh; align-items:center; justify-content:center; color:#64748b;">Chargement de l'administration...</div>
+  </div>
+
+  <script type="text/babel" data-type="module">
+    import React, { useState, useEffect, useRef } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { Shield, Users, BookOpen, Trash2, Key, ArrowLeft, Database, Loader2 } from 'lucide-react';
+
+    const hashPassword = async (password) => {
+      if (typeof crypto !== 'undefined' && crypto.subtle) {
+        const msgBuffer = new TextEncoder().encode(password);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+        return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+      } else {
+        let hash = 0; for (let i = 0; i < password.length; i++) { hash = ((hash << 5) - hash) + password.charCodeAt(i); hash = hash & hash; }
+        return hash.toString();
+      }
+    };
+
+    function AdminApp() {
+      const [serverData, setServerData] = useState({ users: [], notebooks: [], cells: [] });
+      const [isReady, setIsReady] = useState(false);
+      const [user, setUser] = useState(null);
+      const socketRef = useRef(null);
+
+      useEffect(() => {
+        let uid = localStorage.getItem('collab_notebook_uid');
+        const loadTheme = localStorage.getItem('collab_theme');
+        if (loadTheme === 'light') document.documentElement.classList.remove('dark');
+        
+        if (typeof window.io === 'function') {
+          socketRef.current = window.io();
+          socketRef.current.on('data_updated', (newData) => setServerData(newData));
+        }
+        
+        fetch('/api/data')
+          .then(res => res.json())
+          .then(data => {
+             setServerData(data);
+             const myUser = data.users.find(u => u.id === uid);
+             if (!myUser || myUser.role !== 'admin') {
+                 window.location.href = '/'; // Ejection immédiate
+             } else {
+                 setUser(myUser);
+                 setIsReady(true);
+             }
+          })
+          .catch(err => {
+             console.error("API off", err);
+             window.location.href = '/';
+          });
+      }, []);
+
+      const updateServer = (mutationFn) => {
+        setServerData(prevData => {
+          const newData = mutationFn(prevData);
+          if (socketRef.current) socketRef.current.emit('update_data', newData);
+          return newData; 
+        });
+      };
+
+      const handleRoleChange = (targetUserId, newRole) => {
+          updateServer(data => ({
+              ...data,
+              users: data.users.map(u => u.id === targetUserId ? { ...u, role: newRole } : u)
+          }));
+      };
+
+      const handleResetPassword = async (targetUserId, username) => {
+          const newPw = prompt(`Nouveau mot de passe pour l'utilisateur "${username}" :`);
+          if (!newPw) return;
+          const hashed = await hashPassword(newPw);
+          updateServer(data => ({
+              ...data,
+              users: data.users.map(u => u.id === targetUserId ? { ...u, password: hashed } : u)
+          }));
+          alert("Mot de passe réinitialisé.");
+      };
+
+      const handleDeleteUser = (targetUserId, username) => {
+          if (!window.confirm(`ATTENTION : Voulez-vous vraiment supprimer définitivement "${username}" et TOUS ses notebooks ?`)) return;
+          updateServer(data => {
+              const userNbs = data.notebooks.filter(n => n.ownerUid === targetUserId).map(n => n.id);
+              return {
+                  ...data,
+                  users: data.users.filter(u => u.id !== targetUserId),
+                  notebooks: data.notebooks.filter(n => n.ownerUid !== targetUserId),
+                  cells: data.cells.filter(c => !userNbs.includes(c.notebookId))
+              };
+          });
+      };
+
+      const handleDeleteNotebook = (nbId, title) => {
+          if (!window.confirm(`Supprimer le notebook "${title}" de force ?`)) return;
+          updateServer(data => ({
+              ...data,
+              notebooks: data.notebooks.filter(n => n.id !== nbId),
+              cells: data.cells.filter(c => c.notebookId !== nbId)
+          }));
+      };
+
+      if (!isReady) return <div className="h-screen w-screen flex items-center justify-center bg-gray-900 text-red-500"><Loader2 className="animate-spin w-8 h-8" /></div>;
+
+      const totalUsers = serverData.users.length;
+      const totalNbs = serverData.notebooks.length;
+      const totalCells = serverData.cells.length;
+
+      return (
+        <div className="flex h-screen overflow-hidden">
+            {/* SIDEBAR */}
+            <div className="w-64 bg-gray-900 border-r border-gray-800 flex flex-col hidden md:flex text-gray-300">
+                <div className="p-6 flex items-center gap-3 text-red-500 font-bold text-xl border-b border-gray-800">
+                    <Shield size={28} /> Admin Panel
+                </div>
+                <div className="p-4 flex-1">
+                    <div className="text-xs uppercase tracking-widest text-gray-500 mb-4 font-bold">Menu</div>
+                    <a href="/" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-800 rounded-lg transition-colors mb-2">
+                        <ArrowLeft size={18} /> Retour à l'app
+                    </a>
+                </div>
+                <div className="p-4 border-t border-gray-800 text-xs text-gray-500 flex items-center gap-2">
+                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div> Serveur Actif
+                </div>
+            </div>
+
+            {/* MAIN CONTENT */}
+            <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-[#121212] p-4 md:p-8">
+                
+                <header className="flex justify-between items-center mb-8">
+                    <h1 className="text-3xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
+                        <Shield className="text-red-500 md:hidden" /> Administration Globale
+                    </h1>
+                    <a href="/" className="md:hidden bg-gray-200 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-4 py-2 rounded-lg font-medium flex items-center gap-2">
+                        <ArrowLeft size={16}/> Quitter
+                    </a>
+                </header>
+
+                {/* STATS */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+                    <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm flex items-center gap-4">
+                        <div className="p-4 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl"><Users size={24}/></div>
+                        <div>
+                            <div className="text-2xl font-bold text-gray-900 dark:text-white">{totalUsers}</div>
+                            <div className="text-sm text-gray-500">Utilisateurs inscrits</div>
+                        </div>
+                    </div>
+                    <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm flex items-center gap-4">
+                        <div className="p-4 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-xl"><BookOpen size={24}/></div>
+                        <div>
+                            <div className="text-2xl font-bold text-gray-900 dark:text-white">{totalNbs}</div>
+                            <div className="text-sm text-gray-500">Notebooks créés</div>
+                        </div>
+                    </div>
+                    <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm flex items-center gap-4">
+                        <div className="p-4 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded-xl"><Database size={24}/></div>
+                        <div>
+                            <div className="text-2xl font-bold text-gray-900 dark:text-white">{totalCells}</div>
+                            <div className="text-sm text-gray-500">Cellules enregistrées</div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* GESTION UTILISATEURS */}
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Gestion des Utilisateurs</h2>
+                <div className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm overflow-hidden mb-10">
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                            <thead className="bg-gray-50 dark:bg-[#181818]">
+                                <tr>
+                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Pseudo</th>
+                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Rôle</th>
+                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                                {serverData.users.map(u => (
+                                    <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-[#252525] transition-colors">
+                                        <td className="p-4">
+                                            <div className="font-medium text-gray-900 dark:text-white">{u.username}</div>
+                                            <div className="text-xs text-gray-500 font-mono mt-1">{u.id}</div>
+                                        </td>
+                                        <td className="p-4">
+                                            <select 
+                                                value={u.role || 'eleve'} 
+                                                disabled={u.id === user.id}
+                                                onChange={(e) => handleRoleChange(u.id, e.target.value)}
+                                                className={`bg-transparent border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-xs font-bold outline-none cursor-pointer
+                                                ${u.role === 'admin' ? 'text-red-500' : u.role === 'prof' ? 'text-emerald-500' : 'text-blue-500'}`}
+                                            >
+                                                <option value="eleve" className="text-gray-900">ÉLÈVE</option>
+                                                <option value="prof" className="text-gray-900">PROFESSEUR</option>
+                                                <option value="admin" className="text-gray-900">ADMIN</option>
+                                            </select>
+                                        </td>
+                                        <td className="p-4 flex justify-end gap-2">
+                                            <button onClick={() => handleResetPassword(u.id, u.username)} className="bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50 p-2 rounded-lg transition-colors" title="Réinitialiser MDP"><Key size={16} /></button>
+                                            <button onClick={() => handleDeleteUser(u.id, u.username)} disabled={u.id === user.id} className="bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 disabled:opacity-30 p-2 rounded-lg transition-colors" title="Supprimer l'utilisateur"><Trash2 size={16} /></button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                {/* GESTION NOTEBOOKS */}
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Tous les Notebooks</h2>
+                <div className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm overflow-hidden">
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                            <thead className="bg-gray-50 dark:bg-[#181818]">
+                                <tr>
+                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Titre</th>
+                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Propriétaire</th>
+                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Code / Source</th>
+                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                                {serverData.notebooks.map(nb => (
+                                    <tr key={nb.id} className="hover:bg-gray-50 dark:hover:bg-[#252525] transition-colors">
+                                        <td className="p-4">
+                                            <div className="font-medium text-gray-900 dark:text-white flex items-center gap-2">
+                                                <BookOpen size={14} className="text-gray-400"/> {nb.title}
+                                            </div>
+                                        </td>
+                                        <td className="p-4 text-sm text-gray-600 dark:text-gray-300">{nb.ownerUsername}</td>
+                                        <td className="p-4">
+                                            {nb.accessCode && <span className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 px-2 py-1 rounded text-xs font-mono">Code: {nb.accessCode}</span>}
+                                            {nb.templateSourceId && <span className="text-xs text-blue-500 bg-blue-100 dark:bg-blue-900/30 px-2 py-1 rounded ml-1">Copie d'exercice</span>}
+                                        </td>
+                                        <td className="p-4 flex justify-end gap-2">
+                                            <button onClick={() => { localStorage.setItem('collab_open_nb', nb.id); window.location.href='/'; }} className="text-sm bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 px-3 py-1.5 rounded transition-colors text-gray-800 dark:text-white font-medium">Ouvrir</button>
+                                            <button onClick={() => handleDeleteNotebook(nb.id, nb.title)} className="bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 p-1.5 rounded transition-colors" title="Supprimer ce notebook"><Trash2 size={16} /></button>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+      );
+    }
+
+    const root = createRoot(document.getElementById('root'));
+    root.render(<AdminApp />);
+  </script>
+</body>
+</html>

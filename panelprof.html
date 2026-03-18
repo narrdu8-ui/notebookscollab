@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="fr" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Collab - Espace Professeur</title>
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { darkMode: 'class', theme: { extend: { colors: { primary: { 500: 'var(--color-primary-500)', 600: 'var(--color-primary-600)', 700: 'var(--color-primary-700)' } } } } }
+  </script>
+
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    :root { --color-primary-500: #10b981; --color-primary-600: #059669; --color-primary-700: #047857; } /* Vert par défaut pour les profs */
+  </style>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.292.0?deps=react@18.2.0"
+      }
+    }
+  </script>
+</head>
+<body class="bg-gray-50 dark:bg-[#121212] text-slate-900 dark:text-[#cccccc] m-0 p-0 font-sans">
+  
+  <div id="root">
+     <div style="display:flex; height:100vh; align-items:center; justify-content:center; color:#64748b;">Chargement de l'espace enseignant...</div>
+  </div>
+
+  <script type="text/babel" data-type="module">
+    import React, { useState, useEffect, useRef } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { GraduationCap, ArrowLeft, Loader2, BookCopy, Users } from 'lucide-react';
+
+    function ProfApp() {
+      const [serverData, setServerData] = useState({ users: [], notebooks: [], cells: [] });
+      const [isReady, setIsReady] = useState(false);
+      const [user, setUser] = useState(null);
+
+      useEffect(() => {
+        let uid = localStorage.getItem('collab_notebook_uid');
+        const loadTheme = localStorage.getItem('collab_theme');
+        if (loadTheme === 'light') document.documentElement.classList.remove('dark');
+        
+        fetch('/api/data')
+          .then(res => res.json())
+          .then(data => {
+             setServerData(data);
+             const myUser = data.users.find(u => u.id === uid);
+             if (!myUser || (myUser.role !== 'prof' && myUser.role !== 'admin')) {
+                 window.location.href = '/'; // Ejection immédiate
+             } else {
+                 setUser(myUser);
+                 setIsReady(true);
+             }
+          })
+          .catch(err => {
+             console.error("API off", err);
+             window.location.href = '/';
+          });
+      }, []);
+
+      const openNotebook = (nbId) => {
+          localStorage.setItem('collab_open_nb', nbId);
+          window.location.href = '/';
+      };
+
+      if (!isReady) return <div className="h-screen w-screen flex items-center justify-center bg-gray-900 text-emerald-500"><Loader2 className="animate-spin w-8 h-8" /></div>;
+
+      // Récupérer toutes les copies créées à partir des modèles de ce prof
+      const studentCopies = serverData.notebooks.filter(n => n.templateOwnerUid === user.id);
+      
+      // Grouper par modèle d'origine (l'exercice)
+      const copiesByTemplate = {};
+      studentCopies.forEach(nb => {
+          if (!copiesByTemplate[nb.templateSourceId]) copiesByTemplate[nb.templateSourceId] = [];
+          copiesByTemplate[nb.templateSourceId].push(nb);
+      });
+
+      // Récupérer les infos des modèles originaux
+      const originalTemplates = serverData.notebooks.filter(n => n.ownerUid === user.id && n.accessCode);
+
+      return (
+        <div className="flex h-screen overflow-hidden">
+            {/* SIDEBAR */}
+            <div className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col hidden md:flex text-gray-300 shadow-xl z-10 relative">
+                <div className="p-6 flex items-center gap-3 text-emerald-500 font-bold text-xl border-b border-slate-800">
+                    <GraduationCap size={28} /> Espace Prof
+                </div>
+                <div className="p-4 flex-1">
+                    <div className="text-xs uppercase tracking-widest text-slate-500 mb-4 font-bold">Navigation</div>
+                    <a href="/" className="flex items-center gap-3 px-4 py-3 hover:bg-slate-800 rounded-lg transition-colors mb-2 text-slate-300">
+                        <ArrowLeft size={18} /> Retour au code
+                    </a>
+                </div>
+                <div className="p-6 bg-slate-800/50 mt-auto">
+                    <p className="text-xs text-slate-400 mb-1">Connecté en tant que</p>
+                    <p className="font-bold text-white truncate">{user.username}</p>
+                </div>
+            </div>
+
+            {/* MAIN CONTENT */}
+            <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-[#121212] p-4 md:p-8">
+                
+                <header className="flex justify-between items-center mb-8">
+                    <h1 className="text-3xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
+                        <GraduationCap className="text-emerald-500 md:hidden" /> Copies des Élèves
+                    </h1>
+                    <a href="/" className="md:hidden bg-gray-200 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-4 py-2 rounded-lg font-medium flex items-center gap-2">
+                        <ArrowLeft size={16}/> Quitter
+                    </a>
+                </header>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
+                    <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm flex items-center gap-4">
+                        <div className="p-4 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-xl"><BookCopy size={24}/></div>
+                        <div>
+                            <div className="text-2xl font-bold text-gray-900 dark:text-white">{studentCopies.length}</div>
+                            <div className="text-sm text-gray-500">Copies d'élèves générées</div>
+                        </div>
+                    </div>
+                    <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm flex items-center gap-4">
+                        <div className="p-4 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl"><Users size={24}/></div>
+                        <div>
+                            <div className="text-2xl font-bold text-gray-900 dark:text-white">{originalTemplates.length}</div>
+                            <div className="text-sm text-gray-500">Exercices actifs (avec code)</div>
+                        </div>
+                    </div>
+                </div>
+
+                {originalTemplates.length === 0 ? (
+                    <div className="text-center p-12 bg-white dark:bg-[#1e1e1e] border border-dashed border-gray-300 dark:border-gray-700 rounded-2xl">
+                        <GraduationCap size={48} className="mx-auto text-gray-400 mb-4" />
+                        <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Aucun exercice en cours</h3>
+                        <p className="text-gray-500 max-w-md mx-auto">Créez un notebook depuis l'application principale et générez un "Code Élève" pour que vos étudiants puissent le rejoindre et créer leur propre copie.</p>
+                    </div>
+                ) : (
+                    <div className="space-y-8">
+                        {originalTemplates.map(template => {
+                            const copies = copiesByTemplate[template.id] || [];
+                            return (
+                                <div key={template.id} className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm overflow-hidden">
+                                    <div className="p-5 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-[#181818] flex justify-between items-center flex-wrap gap-4">
+                                        <div>
+                                            <h3 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                                                {template.title}
+                                            </h3>
+                                            <p className="text-sm text-gray-500 mt-1">Code distribué : <span className="font-mono font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-900/30 px-2 py-0.5 rounded">{template.accessCode}</span></p>
+                                        </div>
+                                        <div className="text-sm bg-white dark:bg-gray-800 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 font-medium shadow-sm">
+                                            {copies.length} {copies.length > 1 ? 'copies rendues' : 'copie rendue'}
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="p-5">
+                                        {copies.length === 0 ? (
+                                            <p className="text-gray-500 text-sm italic">Personne n'a encore utilisé ce code.</p>
+                                        ) : (
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                                                {copies.map(copy => (
+                                                    <div key={copy.id} className="border border-gray-200 dark:border-gray-700 rounded-xl p-4 flex flex-col justify-between bg-white dark:bg-[#252525] hover:border-emerald-500 transition-colors group">
+                                                        <div>
+                                                            <div className="flex justify-between items-start mb-2">
+                                                                <h4 className="font-bold text-gray-900 dark:text-white truncate" title={copy.ownerUsername}>{copy.ownerUsername}</h4>
+                                                            </div>
+                                                            <p className="text-xs text-gray-500 dark:text-gray-400">Rendu le : {new Date(copy.createdAt).toLocaleDateString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</p>
+                                                        </div>
+                                                        <button onClick={() => openNotebook(copy.id)} className="mt-4 w-full bg-emerald-50 text-emerald-700 hover:bg-emerald-600 hover:text-white dark:bg-emerald-900/30 dark:text-emerald-400 dark:hover:bg-emerald-600 dark:hover:text-white py-2 rounded-lg text-sm font-medium transition-colors">
+                                                            Consulter la copie
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
+
+            </div>
+        </div>
+      );
+    }
+
+    const root = createRoot(document.getElementById('root'));
+    root.render(<ProfApp />);
+  </script>
+</body>
+</html>
