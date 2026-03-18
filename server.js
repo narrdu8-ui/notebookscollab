@@ -1,3 +1,4 @@
+--- START OF FILE server.js ---
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -8,41 +9,30 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
-// Le lien sera fourni par Render de manière sécurisée
 const MONGO_URI = process.env.MONGO_URI; 
 const DB_NAME = "collab_db";
 
 let db, dataCollection;
-// Données par défaut si la base est vide
 let globalData = { users: [], notebooks: [], cells: [] };
 
 app.use(express.static(__dirname));
 
-// --- INITIALISATION DE MONGODB ---
 async function initDB() {
     if (!MONGO_URI) {
         console.error("⚠️ ERREUR : La variable MONGO_URI n'est pas définie !");
         return;
     }
-
     try {
         const client = new MongoClient(MONGO_URI);
         await client.connect();
         console.log("✅ Connecté à MongoDB Atlas !");
-        
         db = client.db(DB_NAME);
         dataCollection = db.collection('app_data');
-
-        // On cherche le document principal qui contient tout ton state
         const savedData = await dataCollection.findOne({ id: "main_state" });
-        
         if (savedData) {
             globalData = savedData.data;
-            console.log("Données chargées depuis MongoDB.");
         } else {
-            // Premier lancement : on crée la structure de base
             await dataCollection.insertOne({ id: "main_state", data: globalData });
-            console.log("Base de données initialisée.");
         }
     } catch (err) {
         console.error("❌ Erreur de connexion MongoDB :", err);
@@ -50,29 +40,28 @@ async function initDB() {
 }
 initDB();
 
-// --- ROUTE API INITIALE ---
 app.get('/api/data', (req, res) => {
     res.json(globalData);
 });
 
-// --- GESTION DU TEMPS RÉEL ---
 io.on('connection', (socket) => {
     console.log('Nouvel utilisateur connecté:', socket.id);
 
-    // Quand un client modifie quelque chose
     socket.on('update_data', async (newData) => {
-        globalData = newData; // Met à jour la RAM pour aller vite
-        
-        // Diffuse instantanément aux autres utilisateurs
+        globalData = newData;
         socket.broadcast.emit('data_updated', globalData);
-
-        // Sauvegarde silencieuse dans MongoDB en arrière-plan
         if (dataCollection) {
             dataCollection.updateOne(
                 { id: "main_state" },
                 { $set: { data: globalData } }
             ).catch(err => console.error("Erreur de sauvegarde MongoDB", err));
         }
+    });
+
+    // NOUVEAU : Diffusion des curseurs/sélections
+    socket.on('cursor_move', (cursorData) => {
+        // On renvoie les infos (position, nom, couleur, cellule) aux autres
+        socket.broadcast.emit('cursor_updated', cursorData);
     });
 
     socket.on('disconnect', () => {
