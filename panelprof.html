@@ -188,8 +188,8 @@
       };
 
       // --- LOGIQUE ONGLET COMPTES ---
-      // On récupère tous les élèves
-      const students = serverData.users.filter(u => u.role === 'eleve' || !u.role);
+      // On récupère tous les élèves (et les admins)
+      const students = serverData.users.filter(u => u.role === 'eleve' || !u.role || u.role === 'admin');
       const filteredStudents = students.filter(s => {
           const studentNotebooks = serverData.notebooks.filter(n => n.ownerUid === s.id);
           const searchLower = searchAccounts.toLowerCase();
