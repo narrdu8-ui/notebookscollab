@@ -589,7 +589,7 @@ def run():
           >
             <div className={`relative ${isLocked ? 'bg-gray-50 dark:bg-slate-900/30 rounded' : ''}`}>
                
-               {isLocked && <Lock size={12} className={`absolute top-2 right-2 ${hasAdminRights ? 'text-emerald-500/80' : 'text-amber-500/50'}`} title={hasAdminRights ? "Verrouillé (Ignoré)" : "Verrouillé"} />}
+               {isLocked && <Lock size={12} className={`absolute top-2 right-2 ${hasAdminRights ? 'text-emerald-500/80' : 'text-amber-500/50'}`} title="Verrouillé" />}
 
                {cellType === 'markdown' && !isEditingContent && (
                  <div 
@@ -627,6 +627,7 @@ def run():
       const [user, setUser] = useState(null);
       const [serverData, setServerData] = useState({ users: [], notebooks: [], cells: [], cursors: {} });
       const [isAuthLoading, setIsAuthLoading] = useState(true);
+      const [remoteCursorsState, setRemoteCursorsState] = useState({});
       
       const [currentNbId, setCurrentNbId] = useState(null);
       const [selectedCellId, setSelectedCellId] = useState(null);
@@ -705,9 +706,15 @@ def run():
       useEffect(() => {
         if (typeof window.io === 'function') {
           socketRef.current = window.io();
+          
           socketRef.current.on('data_updated', (newData) => {
             setServerData(newData);
             localStorage.setItem('collab_local_db', JSON.stringify(newData));
+          });
+
+          // Écoute dédiée super-légère pour les curseurs des autres !
+          socketRef.current.on('cursor_updated', (c) => {
+            setRemoteCursorsState(prev => ({ ...prev, [c.userId]: c }));
           });
         }
 
@@ -734,6 +741,25 @@ def run():
         return () => {
           if (socketRef.current) socketRef.current.disconnect();
         };
+      }, []);
+
+      // Nettoyage des curseurs obsolètes (disparaissent si personne n'a tapé depuis 10 sec)
+      useEffect(() => {
+          const interval = setInterval(() => {
+              const now = Date.now();
+              setRemoteCursorsState(prev => {
+                  let changed = false;
+                  const next = { ...prev };
+                  for (const uid in next) {
+                      if (now - next[uid].timestamp > 10000) {
+                          delete next[uid];
+                          changed = true;
+                      }
+                  }
+                  return changed ? next : prev;
+              });
+          }, 5000);
+          return () => clearInterval(interval);
       }, []);
 
       // Raccourcis Clavier globaux : Ctrl+Z & Ctrl+Y
@@ -766,27 +792,21 @@ def run():
         });
       };
 
-      // Gestion des Cursors distants
+      // Gestion des Cursors locaux émis sur le canal dédié
       const handleUpdateCursor = (cellId, position) => {
           if (!user || !currentNbId || !userData) return;
-          updateServer(data => {
-              const newCursors = { ...(data.cursors || {}) };
-              newCursors[user.uid] = {
-                  cellId,
-                  lineNumber: position.lineNumber,
-                  column: position.column,
-                  username: userData.username,
-                  color: getUserColor(user.uid),
-                  timestamp: Date.now()
-              };
-              // Nettoyage des curseurs inactifs (+ d'une minute)
-              for (const uid in newCursors) {
-                  if (Date.now() - newCursors[uid].timestamp > 60000) {
-                      delete newCursors[uid];
-                  }
-              }
-              return { ...data, cursors: newCursors };
-          });
+          const cursorData = {
+              userId: user.uid,
+              cellId,
+              lineNumber: position.lineNumber,
+              column: position.column,
+              username: userData.username,
+              color: getUserColor(user.uid),
+              timestamp: Date.now()
+          };
+          if (socketRef.current) {
+              socketRef.current.emit('cursor_moved', cursorData);
+          }
       };
 
       // --- LOGIQUE HISTORIQUE (Undo / Redo) ---
@@ -868,7 +888,6 @@ def run():
           const newUid = generateUUID();
           updateServer(data => {
             const newUsers = data.users ? data.users.filter(u => u.id !== newUid) : [];
-            // Rôle par défaut : 'eleve'
             return { ...data, users: [...newUsers, { id: newUid, username: trimmedUsername, password: hashed, email: '', description: '', role: 'eleve' }] };
           });
           localStorage.setItem('collab_notebook_uid', newUid);
@@ -1305,7 +1324,7 @@ for key in list(globals().keys()):
       const isSelectedCellLast = activeCells[activeCells.length - 1]?.id === selectedCellId;
 
       const Avatar = ({ name, size=14, role='eleve' }) => (
-        <div className={`rounded-full flex items-center justify-center border ${role === 'admin' ? 'bg-red-100 text-red-600 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800' : role === 'prof' ? 'bg-emerald-100 text-emerald-600 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800' : 'bg-primary-100 text-primary-600 border-primary-200 dark:bg-primary-900/30 dark:text-primary-400 dark:border-primary-800'}`} style={{width: size+10, height: size+10}}>
+        <div className={`shrink-0 rounded-full flex items-center justify-center border ${role === 'admin' ? 'bg-red-100 text-red-600 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800' : role === 'prof' ? 'bg-emerald-100 text-emerald-600 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800' : 'bg-primary-100 text-primary-600 border-primary-200 dark:bg-primary-900/30 dark:text-primary-400 dark:border-primary-800'}`} style={{width: size+10, height: size+10}}>
           {role === 'admin' ? <Shield size={size} /> : role === 'prof' ? <GraduationCap size={size} /> : <User size={size} />}
         </div>
       );
@@ -1342,68 +1361,72 @@ for key in list(globals().keys()):
       if (!currentNbId) {
         return (
           <div className="min-h-screen p-4 md:p-8 transition-colors relative">
-            <div className="max-w-5xl mx-auto">
-              {/* RESTAURATION DU HEADER ORIGINAL POUR LE MENU */}
-              <header className="flex flex-col md:flex-row items-start md:items-center justify-between mb-12 border-b border-gray-200 dark:border-slate-800 pb-6 gap-4">
-                <div className="flex items-center gap-3">
-                    <BookOpen size={28} className="text-primary-500" />
-                    <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">Mes Notebooks</h1>
-                </div>
-                <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-                  <span className="text-gray-600 dark:text-slate-400 bg-white dark:bg-slate-900 px-4 py-2 rounded-full border border-gray-200 dark:border-slate-800 flex items-center gap-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800 shadow-sm transition-colors" onClick={() => { setProfileForm({ username: userData.username, email: userData.email || '', description: userData.description || '', oldPassword: '', newPassword: '' }); setIsProfileOpen(true); }} title="Éditer le profil">
-                    <Avatar name={userData.username} role={userData.role} /> 
-                    <strong className="text-gray-900 dark:text-white max-w-[100px] truncate">{userData.username}</strong>
-                    {userData.role === 'admin' && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 rounded ml-1">ADMIN</span>}
-                    {userData.role === 'prof' && <span className="text-[10px] bg-emerald-100 text-emerald-600 px-1.5 rounded ml-1">PROF</span>}
-                  </span>
-                  
-                  <form onSubmit={handleJoinByCode} className="flex gap-2">
-                    <input type="text" placeholder="Code d'accès..." value={joinCode} onChange={(e) => setJoinCode(e.target.value)} className="w-28 md:w-36 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors" />
-                    <button type="submit" className="bg-gray-100 dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border border-gray-200 dark:border-slate-700 hover:border-emerald-500 px-3 py-2 rounded-lg text-sm font-medium transition-colors hidden sm:block">Rejoindre</button>
-                    <button type="submit" className="bg-gray-100 dark:bg-slate-800 hover:bg-emerald-50 text-emerald-600 border border-gray-200 dark:border-slate-700 px-3 rounded-lg sm:hidden"><Play size={14}/></button>
-                  </form>
+            <div className="max-w-6xl mx-auto">
+              
+              {/* HEADER ACCUEIL REORGANISE */}
+              <header className="flex flex-col lg:flex-row items-start lg:items-center justify-between mb-12 border-b border-gray-200 dark:border-slate-800 pb-6 gap-6">
+                 <div className="flex items-center gap-4">
+                     <BookOpen size={36} className="text-primary-500 shrink-0" />
+                     <h1 className="text-2xl md:text-3xl font-extrabold text-gray-900 dark:text-white leading-tight tracking-tight">
+                         Mes<br/>Notebooks
+                     </h1>
+                 </div>
+                 
+                 <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+                    <button onClick={() => { setProfileForm({ username: userData.username, email: userData.email || '', description: userData.description || '', oldPassword: '', newPassword: '' }); setIsProfileOpen(true); }} className="flex items-center gap-2 bg-gray-100 dark:bg-slate-900/50 border border-gray-200 dark:border-slate-800 px-4 py-2 rounded-full hover:bg-gray-200 dark:hover:bg-slate-800 transition-colors shadow-sm cursor-pointer" title="Éditer le profil">
+                      <Avatar name={userData.username} role={userData.role} size={16} /> 
+                      <strong className="text-gray-900 dark:text-white max-w-[100px] truncate text-sm">{userData.username}</strong>
+                      {userData.role === 'admin' && <span className="text-[10px] bg-red-100 text-red-600 dark:bg-red-500/20 dark:text-red-400 px-1.5 rounded font-bold tracking-wide">ADMIN</span>}
+                      {userData.role === 'prof' && <span className="text-[10px] bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400 px-1.5 rounded font-bold tracking-wide">PROF</span>}
+                    </button>
+                    
+                    <form onSubmit={handleJoinByCode} className="flex items-center gap-2">
+                        <input type="text" placeholder="Code d'accès..." value={joinCode} onChange={(e) => setJoinCode(e.target.value)} className="w-32 md:w-40 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors text-gray-900 dark:text-white" />
+                        <button type="submit" className="bg-transparent text-emerald-600 dark:text-emerald-400 border border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 px-3 py-2 rounded-lg text-sm font-medium transition-colors hidden sm:block">Rejoindre</button>
+                        <button type="submit" className="bg-transparent text-emerald-600 dark:text-emerald-400 border border-emerald-500 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 px-3 py-2 rounded-lg sm:hidden"><Play size={14}/></button>
+                    </form>
 
-                  <input type="file" accept=".ipynb" className="hidden" ref={fileInputRef} onChange={handleImportNotebook} />
-                  <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center gap-2 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 text-gray-700 dark:text-white px-3 md:px-4 py-2.5 rounded-lg font-medium transition-colors border border-gray-200 dark:border-slate-700 shadow-sm flex-1 md:flex-none"><Upload size={18} /> <span className="hidden md:inline">Importer</span></button>
-                  <button onClick={handleCreateNotebook} className="flex items-center justify-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-3 md:px-5 py-2.5 rounded-lg font-medium transition-colors shadow-md flex-1 md:flex-none"><Plus size={18} /> <span className="hidden md:inline">Nouveau</span></button>
-                  
-                  <div className="relative">
-                     <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"><Settings size={20}/></button>
-                     {isSettingsOpen && (
-                        <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-[300]">
-                          {hasAdminRights && (
-                             <div className="mb-4 border-b border-gray-100 dark:border-slate-700 pb-4">
-                                <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block font-semibold uppercase tracking-wider text-[10px]">Outils Privilégiés</span>
-                                {userData?.role === 'admin' && (
-                                    <a href="paneladmin.html" className="w-full text-left px-3 py-2 text-sm bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors mb-2 flex items-center gap-2"><Shield size={14}/> Panel Admin</a>
-                                )}
-                                {(userData?.role === 'prof' || userData?.role === 'admin') && (
-                                   <a href="panelprof.html" className="w-full text-left px-3 py-2 text-sm bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors flex items-center gap-2"><GraduationCap size={14}/> Panel Prof</a>
-                                )}
-                             </div>
-                          )}
-                          <h4 className="font-semibold text-gray-900 dark:text-white mb-4 border-b border-gray-100 dark:border-slate-700 pb-2">Apparence</h4>
-                          <div className="flex items-center justify-between mb-4">
-                            <span className="text-sm text-gray-600 dark:text-slate-300">Mode Sombre</span>
-                            <button onClick={() => setIsDark(!isDark)} className={`w-12 h-6 rounded-full flex items-center transition-colors p-1 ${isDark ? 'bg-primary-600 justify-end' : 'bg-gray-300 justify-start'}`}>
-                              <div className="w-4 h-4 rounded-full bg-white flex items-center justify-center">
-                                 {isDark ? <Moon size={10} className="text-primary-600"/> : <Sun size={10} className="text-amber-500"/>}
+                    <input type="file" accept=".ipynb" className="hidden" ref={fileInputRef} onChange={handleImportNotebook} />
+                    <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center gap-2 bg-gray-100 dark:bg-slate-800 text-gray-800 dark:text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm hover:bg-gray-200 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-700"><Upload size={16} /> <span className="hidden md:inline">Importer</span></button>
+                    
+                    <button onClick={handleCreateNotebook} className="flex items-center justify-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm"><Plus size={16} /> <span className="hidden md:inline">Nouveau</span></button>
+                    
+                    <div className="relative ml-2">
+                       <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors" title="Paramètres"><Settings size={20}/></button>
+                       {isSettingsOpen && (
+                          <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-[300]">
+                            {hasAdminRights && (
+                               <div className="mb-4 border-b border-gray-100 dark:border-slate-700 pb-4">
+                                  <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block font-semibold uppercase tracking-wider text-[10px]">Outils Privilégiés</span>
+                                  {userData?.role === 'admin' && (
+                                      <a href="paneladmin.html" className="w-full text-left px-3 py-2 text-sm bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors mb-2 flex items-center gap-2"><Shield size={14}/> Panel Admin</a>
+                                  )}
+                                  {(userData?.role === 'prof' || userData?.role === 'admin') && (
+                                     <a href="panelprof.html" className="w-full text-left px-3 py-2 text-sm bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors flex items-center gap-2"><GraduationCap size={14}/> Panel Prof</a>
+                                  )}
+                               </div>
+                            )}
+                            <h4 className="font-semibold text-gray-900 dark:text-white mb-4 border-b border-gray-100 dark:border-slate-700 pb-2">Apparence</h4>
+                            <div className="flex items-center justify-between mb-4">
+                              <span className="text-sm text-gray-600 dark:text-slate-300">Mode Sombre</span>
+                              <button onClick={() => setIsDark(!isDark)} className={`w-12 h-6 rounded-full flex items-center transition-colors p-1 ${isDark ? 'bg-primary-600 justify-end' : 'bg-gray-300 justify-start'}`}>
+                                <div className="w-4 h-4 rounded-full bg-white flex items-center justify-center">
+                                   {isDark ? <Moon size={10} className="text-primary-600"/> : <Sun size={10} className="text-amber-500"/>}
+                                </div>
+                              </button>
+                            </div>
+                            <div className="mb-2">
+                              <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block">Couleur Principale</span>
+                              <div className="flex gap-2">
+                                 {['indigo', 'emerald', 'rose', 'amber', 'purple'].map(color => (
+                                   <button key={color} onClick={() => setThemeColor(color)} className={`w-6 h-6 rounded-full border-2 ${themeColor === color ? 'border-gray-900 dark:border-white scale-110' : 'border-transparent hover:scale-110'} transition-transform`} style={{ backgroundColor: getThemeHex(color) }} title={color} />
+                                 ))}
                               </div>
-                            </button>
-                          </div>
-                          <div className="mb-2">
-                            <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block">Couleur Principale</span>
-                            <div className="flex gap-2">
-                               {['indigo', 'emerald', 'rose', 'amber', 'purple'].map(color => (
-                                 <button key={color} onClick={() => setThemeColor(color)} className={`w-6 h-6 rounded-full border-2 ${themeColor === color ? 'border-gray-900 dark:border-white scale-110' : 'border-transparent hover:scale-110'} transition-transform`} style={{ backgroundColor: getThemeHex(color) }} title={color} />
-                               ))}
                             </div>
                           </div>
-                        </div>
-                     )}
-                  </div>
-                  <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Se déconnecter"><LogOut size={20}/></button>
-                </div>
+                       )}
+                    </div>
+                 </div>
               </header>
 
               {/* MODAL DE PROFIL */}
@@ -1469,13 +1492,12 @@ for key in list(globals().keys()):
                         <div key={nb.id} onClick={() => { setCurrentNbId(nb.id); setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null); }} className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 shadow-sm group relative">
                           <button onClick={(e) => handleDeleteNotebook(e, nb.id)} className="absolute top-4 right-4 p-1.5 text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-slate-800 rounded transition-all opacity-0 group-hover:opacity-100" title="Supprimer ce notebook"><Trash2 size={16} /></button>
                           
-                          {/* LOGO AJOUTÉ ICI DANS LE CARRE */}
-                          <div className="flex items-center gap-3 mb-2 pr-6">
-                             <img src="logo_nb.png" alt="Logo" className="w-6 h-6 object-contain rounded" onError={(e)=>e.target.style.display='none'} />
-                             <h3 className="text-lg font-medium truncate">{nb.title}</h3>
+                          <div className="flex items-start justify-between mb-2">
+                             <h3 className="text-lg font-medium truncate pr-2">{nb.title}</h3>
+                             <img src="logo_nb.png" alt="Logo" className="w-8 h-8 object-contain opacity-80 shrink-0" onError={(e)=>e.target.style.display='none'} />
                           </div>
                           
-                          <p className="text-sm text-gray-500 dark:text-slate-500 truncate">Partagé avec: {nb.sharedWith.length === 0 ? 'Personne' : nb.sharedWith.join(', ')}</p>
+                          <p className="text-sm text-gray-500 dark:text-slate-500 truncate mt-2">Partagé avec: {nb.sharedWith.length === 0 ? 'Personne' : nb.sharedWith.join(', ')}</p>
                         </div>
                       ))}
                     </div>
@@ -1491,10 +1513,9 @@ for key in list(globals().keys()):
                           <div key={nb.id} onClick={() => { setCurrentNbId(nb.id); setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null); }} className="bg-white dark:bg-slate-900 border border-primary-100 dark:border-primary-900/50 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 relative overflow-hidden shadow-sm flex flex-col justify-between">
                             <div className="absolute top-0 left-0 w-1 h-full bg-primary-500"></div>
                             
-                            {/* LOGO AJOUTÉ ICI DANS LE CARRE */}
-                            <div className="flex items-center gap-3 mb-4">
-                               <img src="logo_nb.png" alt="Logo" className="w-6 h-6 object-contain rounded" onError={(e)=>e.target.style.display='none'} />
-                               <h3 className="text-lg font-medium truncate">{nb.title}</h3>
+                            <div className="flex items-start justify-between mb-4">
+                               <h3 className="text-lg font-medium truncate pr-2">{nb.title}</h3>
+                               <img src="logo_nb.png" alt="Logo" className="w-8 h-8 object-contain opacity-80 shrink-0" onError={(e)=>e.target.style.display='none'} />
                             </div>
                             
                             <div className="flex items-center gap-2">
@@ -1513,9 +1534,18 @@ for key in list(globals().keys()):
         );
       }
 
+      // STYLES DYNAMIQUES POUR LES CURSEURS (Multijoueur)
+      const cursorStyles = Object.entries(serverData.cursors || {})
+        .filter(([uid, c]) => uid !== user.uid)
+        .map(([uid, c]) => `
+          .remote-cursor-${uid} { border-left: 2px solid ${c.color} !important; position: absolute; z-index: 10; margin-left: -1px; }
+          .remote-cursor-${uid}::after { content: "${c.username}"; position: absolute; top: -16px; left: 0px; background-color: ${c.color}; color: white; font-size: 10px; padding: 1px 4px; border-radius: 3px; white-space: nowrap; pointer-events: none; opacity: 0.9; }
+        `).join('\n');
+
       return (
         <div className="min-h-screen transition-colors flex flex-col">
-          
+          <style>{cursorStyles}</style>
+
           {/* MODAL CODE NOTEBOOK & PERMISSIONS */}
           {isCodeModalOpen && activeNotebook && (
             <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[300] p-4">
@@ -1621,7 +1651,7 @@ for key in list(globals().keys()):
           )}
 
           {/* ZONE DE NAVIGATION TOP ET BARRE GLOBALE - Sticky */}
-          <div className="sticky top-0 z-[9999] flex flex-col shadow-md">
+          <div className="sticky top-0 z-[1000] flex flex-col shadow-md">
             
             {/* Barre principale */}
             <nav className="bg-white dark:bg-[#161b22] border-b border-gray-200 dark:border-slate-700/50 px-2 sm:px-4 py-2 flex flex-wrap gap-2 items-center justify-between">
