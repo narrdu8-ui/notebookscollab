@@ -413,7 +413,7 @@ def run():
       const [isEditingContent, setIsEditingContent] = useState((cellType === 'markdown' || cellType === 'heading') ? !cell.code : false);
       const typingTimeoutRef = useRef(null);
 
-      // Si l'utilisateur a les droits admin, il peut ignorer le verrouillage côté édition
+      // Autorise les profs/admins à ignorer le cadenas
       const enforceLock = isLocked && !hasAdminRights;
 
       useEffect(() => {
@@ -587,10 +587,6 @@ def run():
       const [isCodeModalOpen, setIsCodeModalOpen] = useState(false);
       const [codePermissions, setCodePermissions] = useState({ canUnlock: true, canCreate: true, canShare: true });
 
-      // Nouveaux Modals Administrateur / Prof
-      const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
-      const [isProfPanelOpen, setIsProfPanelOpen] = useState(false);
-
       const getThemeHex = (color) => {
         const colors = { indigo: '#6366f1', emerald: '#10b981', rose: '#f43f5e', amber: '#f59e0b', purple: '#a855f7' };
         return colors[color] || '#6366f1';
@@ -641,6 +637,15 @@ def run():
         localStorage.setItem('collab_theme', isDark ? 'dark' : 'light');
         localStorage.setItem('collab_color', themeColor);
       }, [isDark, themeColor]);
+
+      // NOUVEAU : GESTION DE L'OUVERTURE DEPUIS LE PANEL
+      useEffect(() => {
+        const forceOpen = localStorage.getItem('collab_open_nb');
+        if (forceOpen && serverData.notebooks.some(n => n.id === forceOpen)) {
+            setCurrentNbId(forceOpen);
+            localStorage.removeItem('collab_open_nb');
+        }
+      }, [serverData.notebooks]);
 
       // NOUVEAU SYSTÈME TEMPS RÉEL (WebSockets)
       const socketRef = useRef(null);
@@ -772,7 +777,7 @@ def run():
           const newUid = generateUUID();
           updateServer(data => {
             const newUsers = data.users ? data.users.filter(u => u.id !== newUid) : [];
-            // Rôle par défaut : 'eleve'
+            // L'utilisateur naît avec le rôle "eleve" par défaut
             return { ...data, users: [...newUsers, { id: newUid, username: trimmedUsername, password: hashed, email: '', description: '', role: 'eleve' }] };
           });
           localStorage.setItem('collab_notebook_uid', newUid);
@@ -873,7 +878,7 @@ def run():
         const newNbId = generateUUID();
         const templateCells = serverData.cells.filter(c => c.notebookId === templateNb.id);
         const newCells = templateCells.map(c => ({
-          ...c, id: generateUUID(), notebookId: newNbId, output: '', status: 'idle', locked: c.locked // on conserve l'état locked
+          ...c, id: generateUUID(), notebookId: newNbId, output: '', status: 'idle', locked: c.locked
         }));
 
         updateServer(data => {
@@ -886,7 +891,7 @@ def run():
             createdAt: new Date().toISOString(),
             permissions: templateNb.studentPermissions || { canUnlock: true, canCreate: true, canShare: true },
             templateSourceId: templateNb.id,
-            templateOwnerUid: templateNb.ownerUid // Permet au prof de retrouver ce notebook
+            templateOwnerUid: templateNb.ownerUid
           };
           return { ...data, notebooks: [...(data.notebooks || []), newNb], cells: [...(data.cells || []), ...newCells] };
         });
@@ -1032,31 +1037,6 @@ def run():
         updateServer(data => ({
             ...data, notebooks: data.notebooks.map(n => n.id === currentNbId ? { ...n, sharedWith: n.sharedWith.filter(u => u !== usernameToRemove) } : n)
         }));
-      };
-
-      // --- ACTIONS ADMINISTRATEUR ---
-      const handleAdminResetPassword = async (targetUserId) => {
-        const newPw = prompt("Nouveau mot de passe pour cet utilisateur :");
-        if (!newPw) return;
-        const hashed = await hashPassword(newPw);
-        updateServer(data => ({
-            ...data,
-            users: data.users.map(u => u.id === targetUserId ? { ...u, password: hashed } : u)
-        }));
-        alert("Le mot de passe a été réinitialisé.");
-      };
-
-      const handleAdminDeleteUser = (targetUserId) => {
-        if (!window.confirm("ATTENTION : Voulez-vous vraiment supprimer cet utilisateur et tous ses notebooks ?")) return;
-        updateServer(data => {
-            const userNbs = data.notebooks.filter(n => n.ownerUid === targetUserId).map(n => n.id);
-            return {
-                ...data,
-                users: data.users.filter(u => u.id !== targetUserId),
-                notebooks: data.notebooks.filter(n => n.ownerUid !== targetUserId),
-                cells: data.cells.filter(c => !userNbs.includes(c.notebookId))
-            };
-        });
       };
 
       // --- Actions Noyau ---
@@ -1221,7 +1201,6 @@ for key in list(globals().keys()):
       const activeCells = serverData.cells.filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
 
       const hasAdminRights = userData?.role === 'admin' || userData?.role === 'prof';
-      const studentNotebooks = serverData.notebooks.filter(n => n.templateOwnerUid === user?.uid); // Pour le prof
 
       const selectedCell = activeCells.find(c => c.id === selectedCellId);
       const isSelectedCellFirst = activeCells[0]?.id === selectedCellId;
@@ -1295,10 +1274,11 @@ for key in list(globals().keys()):
                           {hasAdminRights && (
                              <div className="mb-4 border-b border-gray-100 dark:border-slate-700 pb-4">
                                 <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block font-semibold uppercase tracking-wider text-[10px]">Outils Privilégiés</span>
-                                <button onClick={() => { setIsAdminPanelOpen(true); setIsSettingsOpen(false); }} className="w-full text-left px-3 py-2 text-sm bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors mb-2 flex items-center gap-2"><Shield size={14}/> Panel Admin</button>
-                                
-                                {userData?.role === 'prof' && (
-                                   <button onClick={() => { setIsProfPanelOpen(true); setIsSettingsOpen(false); }} className="w-full text-left px-3 py-2 text-sm bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors flex items-center gap-2"><GraduationCap size={14}/> Panel Prof</button>
+                                {userData?.role === 'admin' && (
+                                    <a href="/paneladmin.html" className="w-full text-left px-3 py-2 text-sm bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors mb-2 flex items-center gap-2"><Shield size={14}/> Panel Admin</a>
+                                )}
+                                {(userData?.role === 'prof' || userData?.role === 'admin') && (
+                                   <a href="/panelprof.html" className="w-full text-left px-3 py-2 text-sm bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors flex items-center gap-2"><GraduationCap size={14}/> Panel Prof</a>
                                 )}
                              </div>
                           )}
@@ -1353,74 +1333,6 @@ for key in list(globals().keys()):
                       </div>
                       <button type="submit" className="w-full bg-primary-600 hover:bg-primary-700 text-white font-medium py-2.5 rounded-lg transition-colors mt-2">Enregistrer</button>
                     </form>
-                  </div>
-                </div>
-              )}
-
-              {/* MODAL ADMIN */}
-              {isAdminPanelOpen && (
-                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-                  <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-3xl shadow-2xl relative max-h-[85vh] overflow-y-auto custom-scrollbar">
-                    <button onClick={() => setIsAdminPanelOpen(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
-                    <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-6 flex items-center gap-2"><Shield className="text-red-500"/> Panel Administrateur</h2>
-                    
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse">
-                            <thead>
-                                <tr className="border-b border-gray-200 dark:border-slate-700">
-                                    <th className="pb-3 text-sm font-semibold text-gray-600 dark:text-slate-300">Utilisateur</th>
-                                    <th className="pb-3 text-sm font-semibold text-gray-600 dark:text-slate-300">Rôle</th>
-                                    <th className="pb-3 text-sm font-semibold text-gray-600 dark:text-slate-300 text-center">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {serverData.users.map(u => (
-                                    <tr key={u.id} className="border-b border-gray-100 dark:border-slate-800/50 hover:bg-gray-50 dark:hover:bg-slate-800/30">
-                                        <td className="py-3 text-sm text-gray-900 dark:text-slate-200">{u.username}</td>
-                                        <td className="py-3 text-sm">
-                                            <span className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold tracking-wider ${u.role === 'admin' ? 'bg-red-100 text-red-600' : u.role === 'prof' ? 'bg-emerald-100 text-emerald-600' : 'bg-gray-100 text-gray-600 dark:bg-slate-800 dark:text-slate-400'}`}>
-                                                {u.role || 'eleve'}
-                                            </span>
-                                        </td>
-                                        <td className="py-3 text-sm flex justify-center gap-2">
-                                            <button onClick={() => handleAdminResetPassword(u.id)} className="bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50 px-3 py-1 rounded transition-colors text-xs font-medium">Reset MDP</button>
-                                            <button onClick={() => handleAdminDeleteUser(u.id)} disabled={u.id === user.uid} className="bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 disabled:opacity-30 px-3 py-1 rounded transition-colors text-xs font-medium">Bannir</button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {/* MODAL PROFESSEUR */}
-              {isProfPanelOpen && (
-                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-                  <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-4xl shadow-2xl relative max-h-[85vh] overflow-y-auto custom-scrollbar">
-                    <button onClick={() => setIsProfPanelOpen(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
-                    <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2 flex items-center gap-2"><GraduationCap className="text-emerald-500"/> Panel Professeur</h2>
-                    <p className="text-sm text-gray-500 dark:text-slate-400 mb-6">Retrouvez ici tous les travaux générés par les élèves à partir de vos codes d'exercices.</p>
-                    
-                    {studentNotebooks.length === 0 ? (
-                        <div className="text-center p-8 border border-dashed border-gray-300 dark:border-slate-700 rounded-xl">
-                            <p className="text-gray-500">Aucun élève n'a encore utilisé vos codes.</p>
-                        </div>
-                    ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                            {studentNotebooks.map(nb => (
-                                <div key={nb.id} className="border border-gray-200 dark:border-slate-700 p-4 rounded-xl bg-gray-50 dark:bg-slate-800/30 flex flex-col justify-between">
-                                    <div>
-                                        <h3 className="font-bold text-gray-900 dark:text-slate-100 mb-1 truncate">{nb.title}</h3>
-                                        <p className="text-sm text-gray-500 dark:text-slate-400">Élève : <strong className="text-primary-500">{nb.ownerUsername}</strong></p>
-                                        <p className="text-xs text-gray-400 dark:text-slate-500 mt-2">Créé le : {new Date(nb.createdAt).toLocaleDateString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</p>
-                                    </div>
-                                    <button onClick={() => { setCurrentNbId(nb.id); setIsProfPanelOpen(false); }} className="mt-4 bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded text-sm font-medium transition-colors text-center w-full">Consulter la copie</button>
-                                </div>
-                            ))}
-                        </div>
-                    )}
                   </div>
                 </div>
               )}
@@ -1613,14 +1525,16 @@ for key in list(globals().keys()):
                      <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"><Settings size={20}/></button>
                      {isSettingsOpen && (
                        <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-50">
+                         
                          {/* PANELS ADMIN / PROF */}
                          {hasAdminRights && (
                             <div className="mb-4 border-b border-gray-100 dark:border-slate-700 pb-4">
                                <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block font-semibold uppercase tracking-wider text-[10px]">Outils Privilégiés</span>
-                               <button onClick={() => { setIsAdminPanelOpen(true); setIsSettingsOpen(false); }} className="w-full text-left px-3 py-2 text-sm bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors mb-2 flex items-center gap-2"><Shield size={14}/> Panel Admin</button>
-                               
-                               {userData?.role === 'prof' && (
-                                  <button onClick={() => { setIsProfPanelOpen(true); setIsSettingsOpen(false); }} className="w-full text-left px-3 py-2 text-sm bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors flex items-center gap-2"><GraduationCap size={14}/> Panel Prof</button>
+                               {userData?.role === 'admin' && (
+                                   <a href="/paneladmin.html" className="w-full text-left px-3 py-2 text-sm bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors mb-2 flex items-center gap-2"><Shield size={14}/> Panel Admin</a>
+                               )}
+                               {(userData?.role === 'prof' || userData?.role === 'admin') && (
+                                  <a href="/panelprof.html" className="w-full text-left px-3 py-2 text-sm bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors flex items-center gap-2"><GraduationCap size={14}/> Panel Prof</a>
                                )}
                             </div>
                          )}
