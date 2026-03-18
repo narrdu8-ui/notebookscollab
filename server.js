@@ -59,9 +59,9 @@ app.get('/api/data', (req, res) => {
 io.on('connection', (socket) => {
     console.log('Nouvel utilisateur connecté:', socket.id);
 
-    // Quand un client modifie quelque chose
+    // Quand un client modifie une cellule, le nom, ajoute un notebook, etc.
     socket.on('update_data', async (newData) => {
-        globalData = newData; // Met à jour la RAM pour aller vite
+        globalData = newData; 
         
         // Diffuse instantanément aux autres utilisateurs
         socket.broadcast.emit('data_updated', globalData);
@@ -73,6 +73,11 @@ io.on('connection', (socket) => {
                 { $set: { data: globalData } }
             ).catch(err => console.error("Erreur de sauvegarde MongoDB", err));
         }
+    });
+
+    // NOUVEAU : Canal Ultra-Rapide dédié uniquement aux Curseurs (évite de sauvegarder le curseur dans MongoDB)
+    socket.on('cursor_moved', (cursorData) => {
+        socket.broadcast.emit('cursor_updated', cursorData);
     });
 
     socket.on('disconnect', () => {
