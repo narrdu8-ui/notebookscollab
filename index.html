@@ -76,7 +76,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useRef } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Play, Plus, Trash2, Loader2, Users, Terminal, Code2, CheckCircle2, ArrowLeft, Share2, BookOpen, User, Lock, Edit2, Download, ArrowUp, ArrowDown, XCircle, Upload, LogOut, Key, Unlock, X, RotateCcw, RotateCw, Settings, Moon, Sun, Copy as CopyIcon, Scissors, ClipboardPaste, Shield, GraduationCap, Image as ImageIcon } from 'lucide-react';
+    import { Play, Plus, Trash2, Loader2, Users, Terminal, Code2, CheckCircle2, ArrowLeft, Share2, BookOpen, User, Lock, Edit2, Download, ArrowUp, ArrowDown, XCircle, Upload, LogOut, Key, Unlock, X, RotateCcw, RotateCw, Settings, Moon, Sun, Copy as CopyIcon, Scissors, ClipboardPaste, Shield, GraduationCap, AlignLeft, AlignCenter, AlignRight } from 'lucide-react';
     import { marked } from 'marked';
 
     const DB_URL = 'db.json';       
@@ -304,16 +304,16 @@ def run():
             value: value,
             language: language,
             theme: isDark ? 'vs-dark' : 'vs',
-            minimap: { enabled: false }, // Force la désactivation de la minimap
-            overviewRulerLanes: 0,       // Supprime les décorations de la règle de défilement
-            automaticLayout: true,       // Gère le redimensionnement externe
-            scrollBeyondLastLine: false, // Indispensable pour l'auto-resize vertical
+            minimap: { enabled: false },
+            overviewRulerLanes: 0,
+            automaticLayout: true,
+            scrollBeyondLastLine: false,
             scrollbar: {
                 vertical: 'hidden',
                 horizontal: 'auto',
                 alwaysConsumeMouseWheel: false,
             },
-            wordWrap: 'on',
+            wordWrap: language === 'python' ? 'off' : 'on',
             fontSize: 14,
             fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
             padding: { top: 12, bottom: 12 },
@@ -321,18 +321,17 @@ def run():
             renderLineHighlight: 'none'
           });
 
-          // Logique d'auto-redimensionnement
           const updateHeight = () => {
             if (editorRef.current && editorContainerRef.current) {
               const contentHeight = editorRef.current.getContentHeight();
-              const finalHeight = Math.max(40, contentHeight); // Minimum 40px de hauteur
+              const finalHeight = Math.max(40, contentHeight);
               editorContainerRef.current.style.height = `${finalHeight}px`;
               editorRef.current.layout();
             }
           };
 
           editorRef.current.onDidContentSizeChange(updateHeight);
-          setTimeout(updateHeight, 0); // Ajustement initial
+          setTimeout(updateHeight, 0);
 
           editorRef.current.onDidChangeModelContent(() => {
               onChange(editorRef.current.getValue());
@@ -351,6 +350,7 @@ def run():
       useEffect(() => {
         if (editorRef.current && window.monaco) {
           window.monaco.editor.setModelLanguage(editorRef.current.getModel(), language);
+          editorRef.current.updateOptions({ wordWrap: language === 'python' ? 'off' : 'on' });
         }
       }, [language]);
 
@@ -376,7 +376,6 @@ def run():
         }
       }, [value]);
 
-      // Raccourci local Monaco : Shift+Enter pour exécuter la cellule
       useEffect(() => {
         let action;
         if (editorRef.current && window.monaco && onRun) {
@@ -401,7 +400,7 @@ def run():
       );
     };
 
-    // --- CELLULE (Style Jupyter avec indications extérieures) ---
+    // --- CELLULE ---
     const Cell = ({ cell, isSelected, onSelect, onUpdate, pyodide, isPyodideLoading, isMonacoReady, registerRun, handleSnapshot, isDark, hasAdminRights }) => {
       const cellType = cell.type || 'code';
       const isLocked = cell.locked || false;
@@ -472,7 +471,7 @@ def run():
       if (isCode) {
         return (
           <div className="flex flex-col sm:flex-row items-start gap-1 sm:gap-4 w-full mt-4 mb-2 group">
-            {/* Indication extérieure gauche (Style Jupyter: In [1]:) */}
+            {/* Indication extérieure gauche */}
             <div className="flex sm:w-20 shrink-0 sm:justify-end pt-1 sm:pt-3 font-mono text-xs sm:text-sm text-primary-600 dark:text-primary-500 select-none pl-1 sm:pl-0">
               In [{cellIndex}]:
             </div>
@@ -481,7 +480,7 @@ def run():
               className={`flex-1 min-w-0 flex flex-col rounded-md overflow-hidden border transition-all ${isSelected ? 'border-primary-500 shadow-md ring-1 ring-primary-500/30' : 'border-gray-300 dark:border-[#3c3c3c]'}`}
               onClick={() => onSelect(cell.id)}
             >
-              {/* Header avec bouton Run simple */}
+              {/* Header */}
               <div className="flex items-center justify-end bg-gray-100 dark:bg-[#252526] pr-2 py-1 select-none border-b border-gray-200 dark:border-[#3c3c3c]">
                  {isLocked && <Lock size={12} className={`mr-auto ml-2 ${hasAdminRights ? 'text-emerald-500/80' : 'text-amber-500/50'}`} title={hasAdminRights ? "Verrouillé (Ignoré car Admin/Prof)" : "Cellule Verrouillée"} />}
                  <button onClick={(e) => { e.stopPropagation(); handleRun(); }} disabled={isPyodideLoading || !pyodide} className="p-1.5 text-gray-600 dark:text-[#cccccc] hover:bg-gray-300 dark:hover:bg-[#333333] hover:text-primary-500 rounded transition-colors disabled:opacity-50 flex items-center gap-1 text-xs font-medium" title="Exécuter (Run) ou Maj+Entrée">
@@ -526,9 +525,11 @@ def run():
       }
 
       // --- RENDU STANDARD (TEXTE, MARKDOWN, TITRE) ---
+      const alignClass = cell.align === 'center' ? 'text-center' : cell.align === 'right' ? 'text-right' : 'text-left';
+
       return (
         <div className="flex flex-col sm:flex-row items-start gap-1 sm:gap-4 w-full mt-4 mb-2">
-          {/* Espace vide pour garder l'alignement avec les cellules de code */}
+          {/* Espace vide */}
           <div className="hidden sm:block sm:w-20 shrink-0"></div>
           
           <div 
@@ -541,7 +542,7 @@ def run():
 
                {cellType === 'markdown' && !isEditingContent && (
                  <div 
-                   className="p-4 prose dark:prose-invert max-w-none min-h-[40px] cursor-text"
+                   className={`p-4 prose dark:prose-invert max-w-none min-h-[40px] cursor-text ${alignClass}`}
                    onDoubleClick={() => { if(!enforceLock) setIsEditingContent(true); }}
                    dangerouslySetInnerHTML={{ __html: safeMarked(localCode || '*Double-cliquez ici pour éditer...*') }}
                  />
@@ -549,7 +550,7 @@ def run():
 
                {cellType === 'heading' && !isEditingContent && (
                  <div 
-                   className="px-4 py-4 cursor-text"
+                   className={`px-4 py-4 cursor-text ${alignClass}`}
                    onDoubleClick={() => { if(!enforceLock) setIsEditingContent(true); }}
                  >
                     <h2 className="text-2xl font-bold text-gray-900 dark:text-slate-100">{localCode || 'Titre vide (double-cliquez pour éditer)'}</h2>
@@ -578,6 +579,7 @@ def run():
       
       const [currentNbId, setCurrentNbId] = useState(null);
       const [selectedCellId, setSelectedCellId] = useState(null);
+      const [viewingUser, setViewingUser] = useState(null);
 
       // Thème & Presse-papiers & Permissions
       const [isDark, setIsDark] = useState(true);
@@ -604,7 +606,7 @@ def run():
       const [editTitle, setEditTitle] = useState('');
       
       const [isProfileOpen, setIsProfileOpen] = useState(false);
-      const [profileForm, setProfileForm] = useState({ username: '', email: '', description: '', avatarUrl: '', newPassword: '' });
+      const [profileForm, setProfileForm] = useState({ username: '', email: '', description: '', oldPassword: '', newPassword: '' });
 
       const [historyPast, setHistoryPast] = useState([]);
       const [historyFuture, setHistoryFuture] = useState([]);
@@ -638,16 +640,15 @@ def run():
         localStorage.setItem('collab_color', themeColor);
       }, [isDark, themeColor]);
 
-      // NOUVEAU : GESTION DE L'OUVERTURE DEPUIS LE PANEL
+      // GESTION DE L'OUVERTURE DEPUIS LE PANEL
       useEffect(() => {
         const forceOpen = localStorage.getItem('collab_open_nb');
-        if (forceOpen && serverData.notebooks.some(n => n.id === forceOpen)) {
+        if (forceOpen && serverData.notebooks?.some(n => n.id === forceOpen)) {
             setCurrentNbId(forceOpen);
             localStorage.removeItem('collab_open_nb');
         }
       }, [serverData.notebooks]);
 
-      // NOUVEAU SYSTÈME TEMPS RÉEL (WebSockets)
       const socketRef = useRef(null);
 
       useEffect(() => {
@@ -655,16 +656,29 @@ def run():
           socketRef.current = window.io();
           socketRef.current.on('data_updated', (newData) => {
             setServerData(newData);
+            localStorage.setItem('collab_local_db', JSON.stringify(newData));
           });
         }
 
-        fetch('/api/data')
-          .then(res => {
-            if (res.ok) return res.json();
-            throw new Error("Erreur de récupération");
-          })
-          .then(data => setServerData(data))
-          .catch(err => console.warn("API backend indisponible :", err));
+        const localDb = localStorage.getItem('collab_local_db');
+        if (localDb) {
+            try { setServerData(JSON.parse(localDb)); } catch(e){}
+        }
+
+        try {
+          fetch(window.location.protocol === 'blob:' ? 'db.json' : './api/data')
+            .then(res => {
+                if (!res.ok) throw new Error("API indisponible");
+                return res.json();
+            })
+            .then(data => {
+                setServerData(data);
+                localStorage.setItem('collab_local_db', JSON.stringify(data));
+            })
+            .catch(err => console.warn("API serveur indisponible, mode local utilisé :", err));
+        } catch (err) {
+            console.warn("Environnement statique détecté, API serveur ignorée.");
+        }
 
         return () => {
           if (socketRef.current) socketRef.current.disconnect();
@@ -696,6 +710,7 @@ def run():
           if (socketRef.current) {
             socketRef.current.emit('update_data', newData);
           }
+          localStorage.setItem('collab_local_db', JSON.stringify(newData)); 
           return newData; 
         });
       };
@@ -729,7 +744,8 @@ def run():
            const newData = { ...currentData, cells: [...otherCells, ...previousCells] };
            
            lastSaveTimeRef.current = Date.now();
-           fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newData) }).catch(() => {});
+           try{ fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newData) }).catch(() => {}); }catch(e){}
+           localStorage.setItem('collab_local_db', JSON.stringify(newData));
            return newData;
         });
         setSelectedCellId(null);
@@ -749,7 +765,8 @@ def run():
            const newData = { ...currentData, cells: [...otherCells, ...nextCells] };
            
            lastSaveTimeRef.current = Date.now();
-           fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newData) }).catch(() => {});
+           try{ fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newData) }).catch(() => {}); }catch(e){}
+           localStorage.setItem('collab_local_db', JSON.stringify(newData));
            return newData;
         });
         setSelectedCellId(null);
@@ -777,8 +794,7 @@ def run():
           const newUid = generateUUID();
           updateServer(data => {
             const newUsers = data.users ? data.users.filter(u => u.id !== newUid) : [];
-            // Création avec le rôle 'eleve' par défaut
-            return { ...data, users: [...newUsers, { id: newUid, username: trimmedUsername, password: hashed, email: '', description: '', avatarUrl: '', role: 'eleve' }] };
+            return { ...data, users: [...newUsers, { id: newUid, username: trimmedUsername, password: hashed, email: '', description: '', role: 'eleve' }] };
           });
           localStorage.setItem('collab_notebook_uid', newUid);
           setUser({ uid: newUid });
@@ -807,6 +823,15 @@ def run():
 
         let hashedPw = userData.password;
         if (profileForm.newPassword) {
+            if (!profileForm.oldPassword) {
+                alert("Veuillez entrer votre ancien mot de passe pour le modifier.");
+                return;
+            }
+            const oldHashed = await hashPassword(profileForm.oldPassword);
+            if (oldHashed !== userData.password) {
+                alert("L'ancien mot de passe est incorrect !");
+                return;
+            }
             hashedPw = await hashPassword(profileForm.newPassword);
         }
 
@@ -815,7 +840,7 @@ def run():
                 alert("Ce pseudo est déjà pris !"); return data; 
             }
             const newUsers = data.users.map(u => u.id === user.uid ? {
-                ...u, username: trimmedUsername, password: hashedPw, email: profileForm.email, description: profileForm.description, avatarUrl: profileForm.avatarUrl
+                ...u, username: trimmedUsername, password: hashedPw, email: profileForm.email, description: profileForm.description
             } : u);
             let newNotebooks = data.notebooks;
             if (trimmedUsername !== userData.username) {
@@ -831,15 +856,6 @@ def run():
             return { ...data, users: newUsers, notebooks: newNotebooks };
         });
         setIsProfileOpen(false);
-      };
-
-      const handleImageUpload = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-          const reader = new FileReader();
-          reader.onload = (event) => setProfileForm(prev => ({...prev, avatarUrl: event.target.result}));
-          reader.readAsDataURL(file);
-        }
       };
 
       const handleCreateNotebook = () => {
@@ -860,7 +876,6 @@ def run():
         const code = joinCode.trim().toUpperCase();
         if (!code) return;
 
-        // CHECK DES CODES SECRETS POUR LES ROLES
         if (code === '1435') {
             updateServer(data => ({
                 ...data,
@@ -1215,10 +1230,9 @@ for key in list(globals().keys()):
       const isSelectedCellFirst = activeCells[0]?.id === selectedCellId;
       const isSelectedCellLast = activeCells[activeCells.length - 1]?.id === selectedCellId;
 
-      const Avatar = ({ url, name, size=14, role='eleve' }) => (
+      const Avatar = ({ name, size=14, role='eleve' }) => (
         <div className={`rounded-full flex items-center justify-center border ${role === 'admin' ? 'bg-red-100 text-red-600 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800' : role === 'prof' ? 'bg-emerald-100 text-emerald-600 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800' : 'bg-primary-100 text-primary-600 border-primary-200 dark:bg-primary-900/30 dark:text-primary-400 dark:border-primary-800'}`} style={{width: size+10, height: size+10}}>
-          {url ? <img src={url} alt={name} style={{width: size+10, height: size+10}} className="rounded-full object-cover" /> : 
-           role === 'admin' ? <Shield size={size} /> : role === 'prof' ? <GraduationCap size={size} /> : <User size={size} />}
+          {role === 'admin' ? <Shield size={size} /> : role === 'prof' ? <GraduationCap size={size} /> : <User size={size} />}
         </div>
       );
 
@@ -1255,30 +1269,34 @@ for key in list(globals().keys()):
         return (
           <div className="min-h-screen p-4 md:p-8 transition-colors relative">
             <div className="max-w-5xl mx-auto">
-              <header className="flex flex-col md:flex-row items-start md:items-center justify-between mb-12 border-b border-gray-200 dark:border-slate-800 pb-6 gap-4">
-                <div className="flex items-center gap-3"><BookOpen size={28} className="text-primary-500" /><h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">Mes Notebooks</h1></div>
-                <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-                  <span className="text-gray-600 dark:text-slate-400 bg-white dark:bg-slate-900 px-4 py-2 rounded-full border border-gray-200 dark:border-slate-800 flex items-center gap-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-800 shadow-sm transition-colors" onClick={() => { setProfileForm({ username: userData.username, email: userData.email || '', description: userData.description || '', avatarUrl: userData.avatarUrl || '', newPassword: '' }); setIsProfileOpen(true); }} title="Éditer le profil">
-                    <Avatar url={userData.avatarUrl} name={userData.username} role={userData.role} /> 
-                    <strong className="text-gray-900 dark:text-white max-w-[100px] truncate">{userData.username}</strong>
-                    {userData.role === 'admin' && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 rounded ml-1">ADMIN</span>}
-                    {userData.role === 'prof' && <span className="text-[10px] bg-emerald-100 text-emerald-600 px-1.5 rounded ml-1">PROF</span>}
-                  </span>
+              {/* HEADER REDESIGN */}
+              <header className="flex flex-col lg:flex-row items-start lg:items-center justify-between mb-10 pb-6 border-b border-gray-200 dark:border-slate-800 gap-4">
+                <div className="flex items-center gap-3">
+                  <BookOpen size={32} className="text-primary-500" />
+                  <h1 className="text-2xl lg:text-3xl font-extrabold text-gray-900 dark:text-white leading-tight">Mes<br/>Notebooks</h1>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto">
+                  <button onClick={() => { setProfileForm({ username: userData.username, email: userData.email || '', description: userData.description || '', oldPassword: '', newPassword: '' }); setIsProfileOpen(true); }} className="flex items-center gap-2 bg-gray-100 dark:bg-[#161b22] border border-gray-200 dark:border-slate-800 px-3 py-1.5 rounded-full hover:bg-gray-200 dark:hover:bg-slate-800 transition-colors shadow-sm">
+                    <Avatar name={userData.username} role={userData.role} size={16} /> 
+                    <strong className="text-gray-900 dark:text-white max-w-[100px] truncate text-sm">{userData.username}</strong>
+                    {userData.role === 'admin' && <span className="text-[10px] bg-red-100 text-red-600 dark:bg-red-500/20 dark:text-red-400 px-1.5 rounded font-bold tracking-wide">ADMIN</span>}
+                    {userData.role === 'prof' && <span className="text-[10px] bg-emerald-100 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400 px-1.5 rounded font-bold tracking-wide">PROF</span>}
+                  </button>
                   
                   <form onSubmit={handleJoinByCode} className="flex gap-2">
-                    <input type="text" placeholder="Code d'accès..." value={joinCode} onChange={(e) => setJoinCode(e.target.value)} className="w-28 md:w-36 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors" />
-                    <button type="submit" className="bg-gray-100 dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border border-gray-200 dark:border-slate-700 hover:border-emerald-500 px-3 py-2 rounded-lg text-sm font-medium transition-colors hidden sm:block">Rejoindre</button>
-                    <button type="submit" className="bg-gray-100 dark:bg-slate-800 hover:bg-emerald-50 text-emerald-600 border border-gray-200 dark:border-slate-700 px-3 rounded-lg sm:hidden"><Play size={14}/></button>
+                    <input type="text" placeholder="Code d'accès..." value={joinCode} onChange={(e) => setJoinCode(e.target.value)} className="w-32 bg-white dark:bg-[#161b22] border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors text-gray-900 dark:text-white" />
+                    <button type="submit" className="bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 px-3 py-2 rounded-lg text-sm font-medium transition-colors hidden sm:block">Rejoindre</button>
+                    <button type="submit" className="bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/50 px-3 rounded-lg sm:hidden"><Play size={14}/></button>
                   </form>
 
                   <input type="file" accept=".ipynb" className="hidden" ref={fileInputRef} onChange={handleImportNotebook} />
-                  <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center gap-2 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 text-gray-700 dark:text-white px-3 md:px-4 py-2.5 rounded-lg font-medium transition-colors border border-gray-200 dark:border-slate-700 shadow-sm flex-1 md:flex-none"><Upload size={18} /> <span className="hidden md:inline">Importer</span></button>
-                  <button onClick={handleCreateNotebook} className="flex items-center justify-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-3 md:px-5 py-2.5 rounded-lg font-medium transition-colors shadow-md flex-1 md:flex-none"><Plus size={18} /> <span className="hidden md:inline">Nouveau</span></button>
+                  <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center gap-2 bg-white dark:bg-[#161b22] hover:bg-gray-50 dark:hover:bg-slate-800 text-gray-700 dark:text-gray-200 px-4 py-2 rounded-lg text-sm font-medium transition-colors border border-gray-200 dark:border-slate-700 shadow-sm"><Upload size={16} /> <span className="hidden md:inline">Importer</span></button>
+                  <button onClick={handleCreateNotebook} className="flex items-center justify-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors shadow-sm"><Plus size={16} /> <span className="hidden md:inline">Nouveau</span></button>
                   
-                  <div className="relative">
-                     <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"><Settings size={20}/></button>
+                  <div className="relative ml-1">
+                     <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-1 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"><Settings size={20}/></button>
                      {isSettingsOpen && (
-                        <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-50">
+                        <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-[250]">
                           
                           {/* PANELS ADMIN / PROF */}
                           {hasAdminRights && (
@@ -1313,14 +1331,13 @@ for key in list(globals().keys()):
                         </div>
                      )}
                   </div>
-
                   <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Se déconnecter"><LogOut size={20}/></button>
                 </div>
               </header>
 
               {/* MODAL DE PROFIL */}
               {isProfileOpen && (
-                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[300] p-4">
                   <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-md shadow-2xl relative">
                     <button onClick={() => setIsProfileOpen(false)} className="absolute top-4 right-4 text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
                     <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-6">Mon Profil</h2>
@@ -1330,33 +1347,44 @@ for key in list(globals().keys()):
                         <input type="text" value={profileForm.username} onChange={e => setProfileForm({...profileForm, username: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 outline-none" required />
                       </div>
                       <div>
-                        <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Nouveau mot de passe (optionnel)</label>
-                        <input type="password" placeholder="Laisser vide pour ne pas changer" value={profileForm.newPassword} onChange={e => setProfileForm({...profileForm, newPassword: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 outline-none" />
-                      </div>
-                      <div>
                         <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Email (optionnel)</label>
                         <input type="email" placeholder="email@exemple.com" value={profileForm.email} onChange={e => setProfileForm({...profileForm, email: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 outline-none" />
-                      </div>
-                      <div>
-                        <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Photo de profil (optionnel)</label>
-                        <div className="flex items-center gap-3">
-                          {profileForm.avatarUrl ? (
-                            <img src={profileForm.avatarUrl} alt="Avatar" className="w-12 h-12 rounded-full object-cover border border-gray-200 dark:border-slate-700" />
-                          ) : (
-                            <div className="w-12 h-12 rounded-full bg-gray-100 dark:bg-slate-800 border border-gray-200 dark:border-slate-700 flex items-center justify-center text-gray-400"><User size={20}/></div>
-                          )}
-                          <button type="button" onClick={() => document.getElementById('avatar-upload').click()} className="flex items-center gap-2 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-sm text-gray-600 dark:text-slate-300 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-700 transition-colors">
-                            <ImageIcon size={16} /> Importer
-                          </button>
-                          <input id="avatar-upload" type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
-                        </div>
                       </div>
                       <div>
                         <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Description (optionnel)</label>
                         <textarea placeholder="Écrivez votre bio ici" value={profileForm.description} onChange={e => setProfileForm({...profileForm, description: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 outline-none h-20 resize-none"></textarea>
                       </div>
+                      <div className="pt-4 border-t border-gray-200 dark:border-slate-700 mt-4">
+                        <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Ancien mot de passe</label>
+                        <input type="password" placeholder="Requis pour changer de mot de passe" value={profileForm.oldPassword} onChange={e => setProfileForm({...profileForm, oldPassword: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 mb-3 text-gray-900 dark:text-white focus:border-primary-500 outline-none" />
+                        <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Nouveau mot de passe</label>
+                        <input type="password" placeholder="Laisser vide pour ne pas changer" value={profileForm.newPassword} onChange={e => setProfileForm({...profileForm, newPassword: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 outline-none" />
+                      </div>
                       <button type="submit" className="w-full bg-primary-600 hover:bg-primary-700 text-white font-medium py-2.5 rounded-lg transition-colors mt-2">Enregistrer</button>
                     </form>
+                  </div>
+                </div>
+              )}
+
+              {/* MODAL POUR VOIR UN AUTRE UTILISATEUR */}
+              {viewingUser && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[300] p-4">
+                  <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-sm shadow-2xl relative text-center">
+                    <button onClick={() => setViewingUser(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
+                    <div className="flex justify-center mb-4">
+                       <Avatar name={viewingUser.username} role={viewingUser.role} size={48} />
+                    </div>
+                    <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">{viewingUser.username}</h2>
+                    <div className="mb-4">
+                       <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${viewingUser.role === 'admin' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' : viewingUser.role === 'prof' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-primary-100 text-primary-600 dark:bg-primary-900/30 dark:text-primary-400'}`}>
+                         {viewingUser.role || 'eleve'}
+                       </span>
+                    </div>
+                    {viewingUser.description ? (
+                       <p className="text-gray-600 dark:text-slate-300 text-sm whitespace-pre-wrap bg-gray-50 dark:bg-slate-800 p-3 rounded-lg text-left">{viewingUser.description}</p>
+                    ) : (
+                       <p className="text-gray-400 dark:text-slate-500 text-sm italic">Aucune description.</p>
+                    )}
                   </div>
                 </div>
               )}
@@ -1387,8 +1415,8 @@ for key in list(globals().keys()):
                             <div className="absolute top-0 left-0 w-1 h-full bg-primary-500"></div>
                             <h3 className="text-lg font-medium mb-4 truncate">{nb.title}</h3>
                             <div className="flex items-center gap-2">
-                               <Avatar url={owner?.avatarUrl} name={nb.ownerUsername} size={18} role={owner?.role} />
-                               <span className="text-sm text-primary-600 dark:text-primary-400 truncate">{nb.ownerUsername}</span>
+                               <Avatar name={nb.ownerUsername} size={18} role={owner?.role} />
+                               <span onClick={(e) => { e.stopPropagation(); setViewingUser(owner); }} className="text-sm text-primary-600 dark:text-primary-400 truncate cursor-pointer hover:underline">{nb.ownerUsername}</span>
                             </div>
                           </div>
                          )
@@ -1407,7 +1435,7 @@ for key in list(globals().keys()):
           
           {/* MODAL CODE NOTEBOOK & PERMISSIONS */}
           {isCodeModalOpen && activeNotebook && (
-            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[300] p-4">
               <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-md shadow-2xl relative">
                 <button onClick={() => setIsCodeModalOpen(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
                 <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Générer un Code Élève</h2>
@@ -1449,7 +1477,7 @@ for key in list(globals().keys()):
 
           {/* MODAL DE PARTAGE */}
           {isSharing && activeNotebook && (
-            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[300] p-4">
               <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-md shadow-2xl relative">
                 <button onClick={() => setIsSharing(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
                 <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Gérer les accès</h2>
@@ -1464,15 +1492,17 @@ for key in list(globals().keys()):
                   <div>
                     <span className="text-xs text-gray-400 dark:text-slate-400 font-semibold mb-3 block uppercase tracking-wider">Partagé avec :</span>
                     <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
-                      {activeNotebook.sharedWith.map(u => (
+                      {activeNotebook.sharedWith.map(u => {
+                         const sharedUserObj = serverData.users.find(user => user.username === u);
+                         return (
                         <div key={u} className="flex justify-between items-center bg-gray-50 dark:bg-slate-800 px-3 py-2.5 rounded-lg border border-gray-200 dark:border-slate-700">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 cursor-pointer hover:underline" onClick={() => { if(sharedUserObj) setViewingUser(sharedUserObj); }}>
                             <User size={16} className="text-primary-500" />
                             <span className="text-sm text-gray-700 dark:text-slate-200 font-medium">{u}</span>
                           </div>
                           <button onClick={() => handleRemoveShare(u)} className="text-gray-400 hover:text-red-500 transition-colors p-1 hover:bg-gray-200 dark:hover:bg-slate-700 rounded"><X size={16}/></button>
                         </div>
-                      ))}
+                      )})}
                     </div>
                   </div>
                 ) : (
@@ -1484,8 +1514,31 @@ for key in list(globals().keys()):
             </div>
           )}
 
+          {/* MODAL POUR VOIR UN AUTRE UTILISATEUR */}
+          {viewingUser && (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[300] p-4">
+              <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-sm shadow-2xl relative text-center">
+                <button onClick={() => setViewingUser(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
+                <div className="flex justify-center mb-4">
+                   <Avatar name={viewingUser.username} role={viewingUser.role} size={48} />
+                </div>
+                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">{viewingUser.username}</h2>
+                <div className="mb-4">
+                   <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${viewingUser.role === 'admin' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' : viewingUser.role === 'prof' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-primary-100 text-primary-600 dark:bg-primary-900/30 dark:text-primary-400'}`}>
+                     {viewingUser.role || 'eleve'}
+                   </span>
+                </div>
+                {viewingUser.description ? (
+                   <p className="text-gray-600 dark:text-slate-300 text-sm whitespace-pre-wrap bg-gray-50 dark:bg-slate-800 p-3 rounded-lg text-left">{viewingUser.description}</p>
+                ) : (
+                   <p className="text-gray-400 dark:text-slate-500 text-sm italic">Aucune description.</p>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* ZONE DE NAVIGATION TOP ET BARRE GLOBALE - Sticky */}
-          <div className="sticky top-0 z-20 flex flex-col shadow-md">
+          <div className="sticky top-0 z-[200] flex flex-col shadow-md">
             
             {/* Barre principale */}
             <nav className="bg-white dark:bg-[#161b22] border-b border-gray-200 dark:border-slate-700/50 px-2 sm:px-4 py-2 flex flex-wrap gap-2 items-center justify-between">
@@ -1545,10 +1598,10 @@ for key in list(globals().keys()):
                     </>
                   )}
 
-                  <div className="relative border-l border-gray-200 dark:border-slate-700 pl-2 ml-2">
-                     <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"><Settings size={20}/></button>
+                  <div className="relative border-l border-gray-200 dark:border-slate-700 pl-2 ml-2 flex items-center gap-1">
+                     <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors" title="Paramètres"><Settings size={20}/></button>
                      {isSettingsOpen && (
-                       <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-50">
+                       <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-[250]">
                          
                          {/* PANELS ADMIN / PROF */}
                          {hasAdminRights && (
@@ -1582,6 +1635,7 @@ for key in list(globals().keys()):
                          </div>
                        </div>
                      )}
+                     <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Se déconnecter"><LogOut size={20}/></button>
                   </div>
 
                 </div>
@@ -1605,6 +1659,16 @@ for key in list(globals().keys()):
                     <option value="raw">Texte brut</option>
                     <option value="heading">Titre</option>
                  </select>
+
+                 {(selectedCell.type === 'markdown' || selectedCell.type === 'heading') && (
+                    <div className="flex flex-shrink-0 items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 ml-2">
+                       <button onClick={() => handleUpdateCell(selectedCell.id, { align: 'left' })} className={`p-1 sm:p-1.5 ${selectedCell.align === 'left' || !selectedCell.align ? 'text-primary-500 bg-gray-100 dark:bg-[#3c3c3c]' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'} rounded-l transition-colors`} title="Aligner à gauche"><AlignLeft size={14} /></button>
+                       <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
+                       <button onClick={() => handleUpdateCell(selectedCell.id, { align: 'center' })} className={`p-1 sm:p-1.5 ${selectedCell.align === 'center' ? 'text-primary-500 bg-gray-100 dark:bg-[#3c3c3c]' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'} transition-colors`} title="Centrer"><AlignCenter size={14} /></button>
+                       <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
+                       <button onClick={() => handleUpdateCell(selectedCell.id, { align: 'right' })} className={`p-1 sm:p-1.5 ${selectedCell.align === 'right' ? 'text-primary-500 bg-gray-100 dark:bg-[#3c3c3c]' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'} rounded-r transition-colors`} title="Aligner à droite"><AlignRight size={14} /></button>
+                    </div>
+                 )}
 
                  <div className="flex flex-shrink-0 items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 ml-2">
                    <button onClick={() => handleMoveCell(selectedCell.id, 'up')} disabled={(isSelectedCellFirst || selectedCell.locked) && !hasAdminRights} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-l hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Monter"><ArrowUp size={14} /></button>
