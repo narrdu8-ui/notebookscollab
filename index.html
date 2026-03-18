@@ -24,7 +24,8 @@
     }
   </script>
 
-  <script src="/socket.io/socket.io.js"></script>
+  <!-- Utilisation d'un CDN pour Socket.IO afin d'éviter l'erreur 404 (et window.io is not a function) -->
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
   
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
@@ -632,24 +633,27 @@ def run():
         localStorage.setItem('collab_color', themeColor);
       }, [isDark, themeColor]);
 
-      const getThemeHex = (color) => {
-        const colors = { indigo: '#6366f1', emerald: '#10b981', rose: '#f43f5e', amber: '#f59e0b', purple: '#a855f7' };
-        return colors[color] || '#6366f1';
-      };
-
       // NOUVEAU SYSTÈME TEMPS RÉEL (WebSockets)
       const socketRef = useRef(null);
 
       useEffect(() => {
-        socketRef.current = window.io();
+        // On vérifie que window.io est disponible pour éviter l'erreur si le script a échoué
+        if (typeof window.io === 'function') {
+          socketRef.current = window.io();
 
+          socketRef.current.on('data_updated', (newData) => {
+            setServerData(newData);
+          });
+        }
+
+        // Récupération initiale
         fetch('/api/data')
-          .then(res => res.json())
-          .then(data => setServerData(data));
-
-        socketRef.current.on('data_updated', (newData) => {
-          setServerData(newData);
-        });
+          .then(res => {
+            if (res.ok) return res.json();
+            throw new Error("Erreur de récupération");
+          })
+          .then(data => setServerData(data))
+          .catch(err => console.warn("API backend indisponible :", err));
 
         return () => {
           if (socketRef.current) socketRef.current.disconnect();
@@ -714,7 +718,7 @@ def run():
            const newData = { ...currentData, cells: [...otherCells, ...previousCells] };
            
            lastSaveTimeRef.current = Date.now();
-           fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newData) });
+           fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newData) }).catch(() => {});
            return newData;
         });
         setSelectedCellId(null);
@@ -734,7 +738,7 @@ def run():
            const newData = { ...currentData, cells: [...otherCells, ...nextCells] };
            
            lastSaveTimeRef.current = Date.now();
-           fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newData) });
+           fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newData) }).catch(() => {});
            return newData;
         });
         setSelectedCellId(null);
