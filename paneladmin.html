@@ -61,31 +61,59 @@
         
         if (typeof window.io === 'function') {
           socketRef.current = window.io();
-          socketRef.current.on('data_updated', (newData) => setServerData(newData));
+          socketRef.current.on('data_updated', (newData) => {
+              setServerData(newData);
+              localStorage.setItem('collab_local_db', JSON.stringify(newData));
+          });
         }
         
-        fetch('/api/data')
-          .then(res => res.json())
-          .then(data => {
-             setServerData(data);
-             const myUser = data.users.find(u => u.id === uid);
+        const checkAuth = (data) => {
+             const myUser = data?.users?.find(u => u.id === uid);
              if (!myUser || myUser.role !== 'admin') {
-                 window.location.href = '/'; // Ejection immédiate
+                 window.location.href = 'index.html'; // Redirection sécurisée avec un chemin relatif
              } else {
                  setUser(myUser);
                  setIsReady(true);
              }
-          })
-          .catch(err => {
-             console.error("API off", err);
-             window.location.href = '/';
-          });
+        };
+
+        // Fallback local en cas d'absence d'API ou au rechargement
+        const localDb = localStorage.getItem('collab_local_db');
+        let hasLocalData = false;
+        if (localDb) {
+            try {
+                const parsed = JSON.parse(localDb);
+                setServerData(parsed);
+                checkAuth(parsed);
+                hasLocalData = true;
+            } catch(e){}
+        }
+
+        try {
+            fetch(window.location.protocol === 'blob:' ? 'db.json' : './api/data')
+              .then(res => {
+                  if (!res.ok) throw new Error("API off");
+                  return res.json();
+              })
+              .then(data => {
+                 setServerData(data);
+                 localStorage.setItem('collab_local_db', JSON.stringify(data));
+                 checkAuth(data);
+              })
+              .catch(err => {
+                 console.warn("API indisponible", err);
+                 if (!hasLocalData) window.location.href = 'index.html';
+              });
+        } catch(err) {
+            if (!hasLocalData) window.location.href = 'index.html';
+        }
       }, []);
 
       const updateServer = (mutationFn) => {
         setServerData(prevData => {
           const newData = mutationFn(prevData);
           if (socketRef.current) socketRef.current.emit('update_data', newData);
+          localStorage.setItem('collab_local_db', JSON.stringify(newData)); // Sécurité locale
           return newData; 
         });
       };
@@ -145,7 +173,7 @@
                 </div>
                 <div className="p-4 flex-1">
                     <div className="text-xs uppercase tracking-widest text-gray-500 mb-4 font-bold">Menu</div>
-                    <a href="/" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-800 rounded-lg transition-colors mb-2">
+                    <a href="index.html" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-800 rounded-lg transition-colors mb-2">
                         <ArrowLeft size={18} /> Retour à l'app
                     </a>
                 </div>
@@ -161,7 +189,7 @@
                     <h1 className="text-3xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
                         <Shield className="text-red-500 md:hidden" /> Administration Globale
                     </h1>
-                    <a href="/" className="md:hidden bg-gray-200 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-4 py-2 rounded-lg font-medium flex items-center gap-2">
+                    <a href="index.html" className="md:hidden bg-gray-200 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-4 py-2 rounded-lg font-medium flex items-center gap-2">
                         <ArrowLeft size={16}/> Quitter
                     </a>
                 </header>
@@ -261,7 +289,7 @@
                                             {nb.templateSourceId && <span className="text-xs text-blue-500 bg-blue-100 dark:bg-blue-900/30 px-2 py-1 rounded ml-1">Copie d'exercice</span>}
                                         </td>
                                         <td className="p-4 flex justify-end gap-2">
-                                            <button onClick={() => { localStorage.setItem('collab_open_nb', nb.id); window.location.href='/'; }} className="text-sm bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 px-3 py-1.5 rounded transition-colors text-gray-800 dark:text-white font-medium">Ouvrir</button>
+                                            <button onClick={() => { localStorage.setItem('collab_open_nb', nb.id); window.location.href='index.html'; }} className="text-sm bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 px-3 py-1.5 rounded transition-colors text-gray-800 dark:text-white font-medium">Ouvrir</button>
                                             <button onClick={() => handleDeleteNotebook(nb.id, nb.title)} className="bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 p-1.5 rounded transition-colors" title="Supprimer ce notebook"><Trash2 size={16} /></button>
                                         </td>
                                     </tr>
