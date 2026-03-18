@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Collab Notebook Python</title>
+  <title>Collab Notebook Python (Auto-hébergé)</title>
   
   <!-- Ajout du logo de l'onglet -->
   <link rel="icon" type="image/png" href="logocollab.png" />
@@ -333,8 +333,8 @@ def run():
             padding: { top: 12, bottom: 12 },
             readOnly: readOnly,
             renderLineHighlight: 'none',
-            occurrencesHighlight: false, // Empêche de surligner la fin des mots intempestivement
-            selectionHighlight: false,   // Idem
+            occurrencesHighlight: false, 
+            selectionHighlight: false,   
             matchBrackets: 'never'
           });
 
@@ -366,7 +366,6 @@ def run():
         };
       }, []);
 
-      // Emission du curseur et de la selection (debounce rapide)
       useEffect(() => {
         if (editorRef.current && window.monaco && onCursorChange) {
             const disposable = editorRef.current.onDidChangeCursorSelection((e) => {
@@ -377,18 +376,16 @@ def run():
                         column: e.selection.positionColumn,
                         selection: e.selection
                     });
-                }, 50); // 50ms debounce pour une sélection fluide
+                }, 50);
             });
             return () => disposable.dispose();
         }
       }, [onCursorChange]);
 
-      // Rendu des curseurs ET sélections multijoueurs
       useEffect(() => {
           if (editorRef.current && window.monaco && decorationsCollectionRef.current) {
               const newDecorations = [];
               remoteCursors.forEach(c => {
-                  // Rendu du curseur (barre verticale avec le nom)
                   newDecorations.push({
                       range: new window.monaco.Range(c.lineNumber, c.column, c.lineNumber, c.column),
                       options: {
@@ -396,7 +393,6 @@ def run():
                           stickiness: window.monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
                       }
                   });
-                  // Rendu du surlignage de la sélection s'il y en a une
                   if (c.selection && (c.selection.startLineNumber !== c.selection.endLineNumber || c.selection.startColumn !== c.selection.endColumn)) {
                       newDecorations.push({
                           range: new window.monaco.Range(c.selection.startLineNumber, c.selection.startColumn, c.selection.endLineNumber, c.selection.endColumn),
@@ -535,7 +531,7 @@ def run():
       if (isCode) {
         return (
           <div className="flex flex-col sm:flex-row items-start gap-1 sm:gap-4 w-full mt-4 mb-2 group">
-            {/* Indication extérieure gauche modifiée de 'In' à 'Entrée' */}
+            {/* Indication extérieure gauche */}
             <div className="flex sm:w-20 shrink-0 sm:justify-end pt-1 sm:pt-3 font-mono text-xs sm:text-sm text-primary-600 dark:text-primary-500 select-none pl-1 sm:pl-0">
               Entrée [{cellIndex}]:
             </div>
@@ -613,7 +609,7 @@ def run():
           >
             <div className={`relative ${isLocked ? 'bg-gray-50 dark:bg-slate-900/30 rounded' : ''}`}>
                
-               {isLocked && <Lock size={12} className={`absolute top-2 right-2 ${hasAdminRights ? 'text-emerald-500/80' : 'text-amber-500/50'}`} title="Verrouillé" />}
+               {isLocked && <Lock size={12} className={`absolute top-2 right-2 ${hasAdminRights ? 'text-emerald-500/80' : 'text-amber-500/50'}`} title={hasAdminRights ? "Verrouillé (Ignoré)" : "Verrouillé"} />}
 
                {cellType === 'markdown' && !isEditingContent && (
                  <div 
@@ -663,7 +659,7 @@ def run():
       const [isSettingsOpen, setIsSettingsOpen] = useState(false);
       const [clipboardCell, setClipboardCell] = useState(null);
       const [isCodeModalOpen, setIsCodeModalOpen] = useState(false);
-      const [codePermissions, setCodePermissions] = useState({ canUnlock: true, canCreate: true, canShare: true });
+      const [codePermissions, setCodePermissions] = useState({ canUnlock: true, canCreate: true, canShare: true, canGenerateCode: true });
 
       // Recherche et Auto-completion
       const [searchQuery, setSearchQuery] = useState('');
@@ -771,7 +767,7 @@ def run():
         };
       }, []);
 
-      // Nettoyage des curseurs obsolètes (disparaissent si personne n'a tapé depuis 10 sec)
+      // Nettoyage des curseurs obsolètes
       useEffect(() => {
           const interval = setInterval(() => {
               const now = Date.now();
@@ -917,6 +913,7 @@ def run():
           const newUid = generateUUID();
           updateServer(data => {
             const newUsers = data.users ? data.users.filter(u => u.id !== newUid) : [];
+            // Rôle par défaut : 'eleve'
             return { ...data, users: [...newUsers, { id: newUid, username: trimmedUsername, password: hashed, email: '', description: '', role: 'eleve' }] };
           });
           localStorage.setItem('collab_notebook_uid', newUid);
@@ -1042,7 +1039,7 @@ def run():
             ownerUsername: myData.username, 
             sharedWith: [], 
             createdAt: new Date().toISOString(),
-            permissions: templateNb.studentPermissions || { canUnlock: true, canCreate: true, canShare: true },
+            permissions: templateNb.studentPermissions || { canUnlock: true, canCreate: true, canShare: true, canGenerateCode: true },
             templateSourceId: templateNb.id,
             templateOwnerUid: templateNb.ownerUid
           };
@@ -1055,7 +1052,7 @@ def run():
       const openCodeModal = () => {
           const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId);
           if (activeNotebook) {
-              setCodePermissions(activeNotebook.studentPermissions || { canUnlock: false, canCreate: false, canShare: false });
+              setCodePermissions(activeNotebook.studentPermissions || { canUnlock: true, canCreate: true, canShare: true, canGenerateCode: true });
               setIsCodeModalOpen(true);
           }
       };
@@ -1348,7 +1345,7 @@ for key in list(globals().keys()):
                   insertOrder = nbCells[nbCells.length - 1].order + 10;
               }
               const newCell = { ...clipboardCell, id: newCellId, notebookId: currentNbId, order: insertOrder };
-              return { ...data, cells: [...(data.cells || []), newCell] };
+              return { ...data, cells: [...data.cells, newCell] };
           });
           setSelectedCellId(newCellId);
       };
@@ -1511,9 +1508,9 @@ for key in list(globals().keys()):
                         <div key={nb.id} onClick={() => { setCurrentNbId(nb.id); setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null); }} className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 shadow-sm group relative overflow-hidden">
                           <button onClick={(e) => handleDeleteNotebook(e, nb.id)} className="absolute top-4 right-4 p-1.5 text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-slate-800 rounded transition-all opacity-0 group-hover:opacity-100 z-20" title="Supprimer ce notebook"><Trash2 size={16} /></button>
                           
-                          <div className="flex items-center justify-between mb-2">
-                             <h3 className="text-lg font-medium pr-8 truncate relative z-10">{nb.title}</h3>
-                             <img src="logo_nb.png" alt="Logo" className="w-8 h-8 object-contain opacity-80 shrink-0" onError={(e)=>e.target.style.display='none'} />
+                          <div className="flex items-start gap-3 mb-2 pr-8 relative z-10">
+                             <img src="logo_nb.png" alt="Logo" className="w-6 h-6 object-contain shrink-0" onError={(e)=>e.target.style.display='none'} />
+                             <h3 className="text-lg font-medium truncate">{nb.title}</h3>
                           </div>
                           
                           <p className="text-sm text-gray-500 dark:text-slate-500 truncate relative z-10 mt-2">Partagé avec: {nb.sharedWith.length === 0 ? 'Personne' : nb.sharedWith.join(', ')}</p>
@@ -1532,9 +1529,9 @@ for key in list(globals().keys()):
                           <div key={nb.id} onClick={() => { setCurrentNbId(nb.id); setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null); }} className="bg-white dark:bg-slate-900 border border-primary-100 dark:border-primary-900/50 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 relative overflow-hidden shadow-sm flex flex-col justify-between">
                             <div className="absolute top-0 left-0 w-1 h-full bg-primary-500 z-20"></div>
                             
-                            <div className="flex items-center justify-between mb-4">
-                               <h3 className="text-lg font-medium pr-8 truncate relative z-10">{nb.title}</h3>
-                               <img src="logo_nb.png" alt="Logo" className="w-8 h-8 object-contain opacity-80 shrink-0" onError={(e)=>e.target.style.display='none'} />
+                            <div className="flex items-start gap-3 mb-4 pr-8 relative z-10">
+                               <img src="logo_nb.png" alt="Logo" className="w-6 h-6 object-contain shrink-0" onError={(e)=>e.target.style.display='none'} />
+                               <h3 className="text-lg font-medium truncate">{nb.title}</h3>
                             </div>
                             
                             <div className="flex items-center gap-2 relative z-10">
@@ -1638,6 +1635,10 @@ for key in list(globals().keys()):
                   <label className="flex items-center gap-3 cursor-pointer">
                     <input type="checkbox" checked={codePermissions.canShare} onChange={e => setCodePermissions({...codePermissions, canShare: e.target.checked})} className="w-4 h-4 rounded text-primary-600" />
                     <span className="text-sm text-gray-700 dark:text-slate-300">Partager le notebook</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" checked={codePermissions.canGenerateCode} onChange={e => setCodePermissions({...codePermissions, canGenerateCode: e.target.checked})} className="w-4 h-4 rounded text-primary-600" />
+                    <span className="text-sm text-gray-700 dark:text-slate-300">Permettre aux élèves de partager leur copie avec un code</span>
                   </label>
                 </div>
 
@@ -1783,17 +1784,53 @@ for key in list(globals().keys()):
 
                   <button onClick={handleDownload} className="flex items-center gap-2 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors" title="Exporter en .py"><Download size={16} /> <span className="hidden md:inline">Exporter</span></button>
                   
-                  {(activeNotebook?.ownerUid === user?.uid || hasAdminRights) && (
-                    <>
-                      <button onClick={openCodeModal} className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors shadow-sm" title="Créer un code et configurer le notebook"><Key size={16} /> <span className="hidden md:inline">Générer code</span></button>
-                      {(!activeNotebook.permissions || activeNotebook.permissions.canShare || hasAdminRights) && (
-                        <button onClick={() => setIsSharing(true)} className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors shadow-sm" title="Partager pour collaborer en direct"><Share2 size={16} /> <span className="hidden md:inline">Partager</span></button>
-                      )}
-                    </>
+                  {/* Condition : Si je suis admin, ou propriétaire. Si c'est une copie, il faut la permission 'canGenerateCode'. */}
+                  {((activeNotebook?.ownerUid === user?.uid && activeNotebook?.permissions?.canGenerateCode !== false) || hasAdminRights) && (
+                    <button onClick={openCodeModal} className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors shadow-sm" title="Créer un code et configurer le notebook"><Key size={16} /> <span className="hidden md:inline">Générer code</span></button>
+                  )}
+                  
+                  {(!activeNotebook?.permissions || activeNotebook.permissions.canShare || hasAdminRights) && (
+                    <button onClick={() => setIsSharing(true)} className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors shadow-sm" title="Partager pour collaborer en direct"><Share2 size={16} /> <span className="hidden md:inline">Partager</span></button>
                   )}
 
-                  <div className="flex items-center border-l border-gray-200 dark:border-slate-700 pl-2 ml-2">
-                     <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Se déconnecter"><LogOut size={20}/></button>
+                  <div className="relative border-l border-gray-200 dark:border-slate-700 pl-2 ml-2 flex items-center gap-1 z-[9999]">
+                     <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors relative z-[9999]" title="Paramètres"><Settings size={20}/></button>
+                     {isSettingsOpen && (
+                       <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-[9999]">
+                         
+                         {/* PANELS ADMIN / PROF */}
+                         {hasAdminRights && (
+                            <div className="mb-4 border-b border-gray-100 dark:border-slate-700 pb-4">
+                               <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block font-semibold uppercase tracking-wider text-[10px]">Outils Privilégiés</span>
+                               {userData?.role === 'admin' && (
+                                   <a href="paneladmin.html" className="w-full text-left px-3 py-2 text-sm bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors mb-2 flex items-center gap-2"><Shield size={14}/> Panel Admin</a>
+                               )}
+                               {(userData?.role === 'prof' || userData?.role === 'admin') && (
+                                  <a href="panelprof.html" className="w-full text-left px-3 py-2 text-sm bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors flex items-center gap-2"><GraduationCap size={14}/> Panel Prof</a>
+                               )}
+                            </div>
+                         )}
+
+                         <h4 className="font-semibold text-gray-900 dark:text-white mb-4 border-b border-gray-100 dark:border-slate-700 pb-2">Apparence</h4>
+                         <div className="flex items-center justify-between mb-4">
+                           <span className="text-sm text-gray-600 dark:text-slate-300">Mode Sombre</span>
+                           <button onClick={() => setIsDark(!isDark)} className={`w-12 h-6 rounded-full flex items-center transition-colors p-1 ${isDark ? 'bg-primary-600 justify-end' : 'bg-gray-300 justify-start'}`}>
+                             <div className="w-4 h-4 rounded-full bg-white flex items-center justify-center">
+                                {isDark ? <Moon size={10} className="text-primary-600"/> : <Sun size={10} className="text-amber-500"/>}
+                             </div>
+                           </button>
+                         </div>
+                         <div className="mb-2">
+                           <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block">Couleur Principale</span>
+                           <div className="flex gap-2">
+                              {['indigo', 'emerald', 'rose', 'amber', 'purple'].map(color => (
+                                <button key={color} onClick={() => setThemeColor(color)} className={`w-6 h-6 rounded-full border-2 ${themeColor === color ? 'border-gray-900 dark:border-white scale-110' : 'border-transparent hover:scale-110'} transition-transform`} style={{ backgroundColor: getThemeHex(color) }} title={color} />
+                              ))}
+                           </div>
+                         </div>
+                       </div>
+                     )}
+                     <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors relative z-[9999]" title="Se déconnecter"><LogOut size={20}/></button>
                   </div>
 
                 </div>
