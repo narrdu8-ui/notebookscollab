@@ -59,7 +59,7 @@ app.get('/api/data', (req, res) => {
 io.on('connection', (socket) => {
     console.log('Nouvel utilisateur connecté:', socket.id);
 
-    // Quand un client modifie une cellule, le nom, ajoute un notebook, etc.
+    // Quand un client modifie quelque chose
     socket.on('update_data', async (newData) => {
         globalData = newData; 
         
@@ -75,7 +75,7 @@ io.on('connection', (socket) => {
         }
     });
 
-    // NOUVEAU : Canal Ultra-Rapide dédié uniquement aux Curseurs (évite de sauvegarder le curseur dans MongoDB)
+    // NOUVEAU: Relais ultra-rapide pour les curseurs multijoueurs !
     socket.on('cursor_moved', (cursorData) => {
         socket.broadcast.emit('cursor_updated', cursorData);
     });
