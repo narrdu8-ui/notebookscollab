@@ -132,13 +132,16 @@
           const targetId = window.current_p5_target;
           if (window.activeP5Instances[targetId]) {
             window.activeP5Instances[targetId].remove();
+            delete window.activeP5Instances[targetId];
           }
           const container = document.getElementById(targetId);
           if (container) {
             container.innerHTML = '';
             try {
               if (typeof window.p5 !== 'function') throw new Error("p5.js introuvable.");
-              window.activeP5Instances[targetId] = new window.p5((p) => sketchProxy(p), container);
+              window.activeP5Instances[targetId] = new window.p5((p) => {
+                  try { sketchProxy(p); } catch(e) { console.error("Erreur exécution proxy p5:", e); }
+              }, container);
             } catch(e) {
               console.error("Erreur p5:", e);
               throw e;
@@ -190,6 +193,7 @@
             
             if (isMounted) {
               await py.loadPackage("micropip");
+              // VERSION ROBUSTE: try/except dans setup et draw pour éviter de crasher le noyau wasm
               const p5_code = `
 import js
 import __main__
@@ -233,13 +237,26 @@ def run():
 
         def _setup():
             update_vars()
-            if setup_fn: setup_fn()
+            if setup_fn and callable(setup_fn):
+                try:
+                    setup_fn()
+                except Exception as e:
+                    import traceback
+                    print(f"Erreur P5 (setup): {e}")
+
         def _draw():
             update_vars()
-            if draw_fn: draw_fn()
+            if draw_fn and callable(draw_fn):
+                try:
+                    draw_fn()
+                except Exception as e:
+                    import traceback
+                    print(f"Erreur P5 (draw): {e}")
+                    p.noLoop() # Arrête la boucle pour éviter de spammer la console
             
         p.setup = create_proxy(_setup)
-        if draw_fn: p.draw = create_proxy(_draw)
+        if draw_fn and callable(draw_fn): 
+            p.draw = create_proxy(_draw)
 
     js.start_p5_instance(create_proxy(sketch))`;
               py.globals.set('p5_code', p5_code);
@@ -345,9 +362,8 @@ def run():
           editorRef.current.onDidContentSizeChange(updateHeight);
           setTimeout(updateHeight, 0);
 
-          // Émet les deltas (changes) précis, pas seulement le full texte
           editorRef.current.onDidChangeModelContent((e) => {
-              if (isRemoteUpdateRef.current) return; // Ignore l'événement si on est en train d'appliquer la frappe de quelqu'un d'autre
+              if (isRemoteUpdateRef.current) return;
               onChangeCode(editorRef.current.getValue(), e.changes);
           });
           
@@ -362,15 +378,12 @@ def run():
         };
       }, []);
 
-      // Écouteur global pour l'injection chirurgicale des frappes distantes !
       useEffect(() => {
         const handleRemoteEdits = (e) => {
             const { code, changes } = e.detail;
             if (editorRef.current && window.monaco) {
                 isRemoteUpdateRef.current = true;
-                
                 if (changes && changes.length > 0) {
-                    // Application des deltas = 0 saut de curseur, 100% collaboratif fluide !
                     const edits = changes.map(change => ({
                         range: new window.monaco.Range(
                             change.range.startLineNumber,
@@ -383,25 +396,20 @@ def run():
                     }));
                     editorRef.current.executeEdits("remote", edits);
                 } else {
-                    // Fallback de sécurité : on remplace tout si pas de deltas (ex: undo/redo distant)
                     const model = editorRef.current.getModel();
                     editorRef.current.executeEdits("remote", [{
                         range: model.getFullModelRange(),
                         text: code
                     }]);
                 }
-                
                 isRemoteUpdateRef.current = false;
                 onSilentUpdate(editorRef.current.getValue());
             }
         };
-        
         window.addEventListener(`apply_monaco_edits_${cellId}`, handleRemoteEdits);
         return () => window.removeEventListener(`apply_monaco_edits_${cellId}`, handleRemoteEdits);
       }, [cellId]);
 
-      // Si le 'value' React change mais qu'on N'EST PAS focus, c'est sûrement
-      // un chargement initial, ou un changement de type de cellule.
       useEffect(() => {
         if (editorRef.current && window.monaco) {
           const currentValue = editorRef.current.getValue();
@@ -432,7 +440,6 @@ def run():
         }
       }, [onCursorChange]);
 
-      // Rendu des curseurs et des sélections des autres utilisateurs
       useEffect(() => {
           if (editorRef.current && window.monaco && decorationsCollectionRef.current) {
               const newDecorations = [];
@@ -495,11 +502,10 @@ def run():
     };
 
     // --- CELLULE ---
-    const Cell = ({ cell, isSelected, onSelect, onUpdateProperty, onUpdateCode, onUpdateCursor, remoteCursors, pyodide, isPyodideLoading, isMonacoReady, registerRun, handleSnapshot, isDark, hasAdminRights }) => {
+    const Cell = ({ cell, isSelected, onSelect, onUpdateProperty, onUpdateCode, onUpdateCursor, remoteCursors, pyodide, isPyodideLoading, isMonacoReady, registerRun, handleSnapshot, isDark, hasAdminRights, getNextExecutionCount }) => {
       const cellType = cell.type || 'code';
       const isLocked = cell.locked || false;
       const isCode = cellType === 'code';
-      const cellIndex = Math.max(1, Math.floor(cell.order / 10));
       
       const [localCode, setLocalCode] = useState(cell.code || '');
       const [isFocused, setIsFocused] = useState(false);
@@ -507,28 +513,23 @@ def run():
 
       const enforceLock = isLocked;
 
-      // On écoute les changements props (utile pour le premier rendu ou un full sync undo/redo)
       useEffect(() => {
         if (cell.code !== localCode) {
            setLocalCode(cell.code);
         }
       }, [cell.code]);
 
-      // Quand on tape sur NOTRE clavier
       const handleCodeChange = (newValue, changes) => {
         if (enforceLock) return;
-        setLocalCode(newValue); // MàJ immédiate pour la réactivité de notre UI
+        setLocalCode(newValue); 
         
-        // On envoie le texte (et les deltas s'il y en a) via le canal dédié rapide
         if (changes && onUpdateCode) {
             onUpdateCode(cell.id, newValue, changes);
         } else if (onUpdateProperty) {
-            // S'il n'y a pas de deltas (ex: le user a switché le type Markdown/Code et reset), on met à jour la prop complète
             onUpdateProperty(cell.id, { code: newValue });
         }
       };
 
-      // Invoqué par MonacoEditor après l'application chirurgicale du code distant (sans émettre en retour)
       const handleSilentUpdate = (newValue) => {
         setLocalCode(newValue);
       };
@@ -549,16 +550,26 @@ def run():
         }
         window.current_p5_target = `p5-target-${cell.id}`;
         
-        onUpdateProperty(cell.id, { status: 'running', output: '' });
+        const nextCount = getNextExecutionCount();
+        onUpdateProperty(cell.id, { status: 'running', output: '', executionCount: nextCount });
         
         let currentOutput = "";
         pyodide.setStdout({ batched: (msg) => currentOutput += msg + "\n" });
         pyodide.setStderr({ batched: (msg) => currentOutput += msg + "\n" });
         
         try {
+          // NOUVEAU: Nettoie le cache de p5 de la précédente exécution
+          await pyodide.runPythonAsync(`
+try:
+    if 'setup' in globals(): del globals()['setup']
+    if 'draw' in globals(): del globals()['draw']
+except Exception:
+    pass
+          `);
+            
           await pyodide.loadPackagesFromImports(localCode);
           await pyodide.runPythonAsync(localCode);
-          onUpdateProperty(cell.id, { output: currentOutput || "[Exécuté avec succès]", status: 'idle' });
+          onUpdateProperty(cell.id, { output: currentOutput || "[Exécuté avec succès]", status: 'idle', executionCount: nextCount });
         } catch (err) {
           let errorMsg = err.toString();
           currentOutput += errorMsg;
@@ -566,7 +577,7 @@ def run():
             const match = errorMsg.match(/No module named '([^']+)'/);
             if (match) currentOutput += `\n\n💡 ASTUCE :\nSi le module '${match[1]}' existe sur PyPI, utilisez : \nimport micropip\nawait micropip.install('${match[1]}')`;
           }
-          onUpdateProperty(cell.id, { output: currentOutput, status: 'error' });
+          onUpdateProperty(cell.id, { output: currentOutput, status: 'error', executionCount: nextCount });
         }
       };
 
@@ -575,11 +586,13 @@ def run():
         return () => { if (registerRun) registerRun(cell.id, null); };
       }, [handleRun, registerRun]);
 
+      const executionLabel = cell.status === 'running' ? '*' : (cell.executionCount || ' ');
+
       if (isCode) {
         return (
           <div className="flex flex-col sm:flex-row items-start gap-1 sm:gap-4 w-full mt-4 mb-2 group">
             <div className="flex sm:w-20 shrink-0 sm:justify-end pt-1 sm:pt-3 font-mono text-xs sm:text-sm text-primary-600 dark:text-primary-500 select-none pl-1 sm:pl-0">
-              Entrée [{cellIndex}]:
+              Entrée [{executionLabel}]:
             </div>
 
             <div 
@@ -775,7 +788,6 @@ def run():
         }
       }, [serverData.notebooks]);
 
-      // --- LE REDUCER LOCAL ET WEBSOCKET (LE COEUR DU FIX) ---
       const applyActionToState = (state, action) => {
           const next = { ...state };
           switch(action.type) {
@@ -799,11 +811,10 @@ def run():
       };
 
       const dispatchServerAction = (action) => {
-          setServerData(prev => applyActionToState(prev, action)); // Optmistic UI
-          if (socketRef.current) socketRef.current.emit('action', action); // Server sync
+          setServerData(prev => applyActionToState(prev, action)); 
+          if (socketRef.current) socketRef.current.emit('action', action); 
       };
 
-      // Pour les très gros chargements (Historique, Import...) on garde la méthode forte
       const updateServerFullSync = (mutationFn) => {
         setServerData(prevData => {
           const newData = mutationFn(prevData);
@@ -811,6 +822,21 @@ def run():
           localStorage.setItem('collab_local_db', JSON.stringify(newData)); 
           return newData; 
         });
+      };
+
+      // Fonction propre pour injecter les styles de curseurs distants (Évite les lags)
+      const injectCursorStyle = (uid, username, color) => {
+          const styleId = `cursor-style-${uid}`;
+          if (!document.getElementById(styleId)) {
+              const style = document.createElement('style');
+              style.id = styleId;
+              style.innerHTML = `
+                .remote-cursor-${uid} { border-left: 2px solid ${color} !important; position: absolute; z-index: 10; margin-left: -1px; }
+                .remote-cursor-${uid}::after { content: "${username}"; position: absolute; top: -16px; left: 0px; background-color: ${color}; color: white; font-size: 10px; padding: 1px 4px; border-radius: 3px; white-space: nowrap; pointer-events: none; opacity: 0.9; }
+                .remote-selection-${uid} { background-color: ${color}40 !important; }
+              `;
+              document.head.appendChild(style);
+          }
       };
 
       useEffect(() => {
@@ -822,19 +848,17 @@ def run():
             localStorage.setItem('collab_local_db', JSON.stringify(newData));
           });
 
-          // Réception des actions structurelles (sans écraser le reste !)
           socketRef.current.on('action_received', (action) => {
               setServerData(prev => applyActionToState(prev, action));
           });
 
-          // Réception chirurgicale de Monaco
           socketRef.current.on('remote_cell_edits', ({ cellId, code, changes }) => {
               window.dispatchEvent(new CustomEvent(`apply_monaco_edits_${cellId}`, { detail: { code, changes } }));
-              // Mise à jour de l'état global React sans redéclencher un emit
               setServerData(prev => applyActionToState(prev, { type: 'UPDATE_CELL', payload: { cellId, data: { code } } }));
           });
 
           socketRef.current.on('cursor_updated', (c) => {
+            injectCursorStyle(c.userId, c.username, c.color);
             setRemoteCursorsState(prev => ({ ...prev, [c.userId]: c }));
           });
         }
@@ -862,7 +886,6 @@ def run():
         return () => { if (socketRef.current) socketRef.current.disconnect(); };
       }, []);
 
-      // Nettoyage des curseurs obsolètes
       useEffect(() => {
           const interval = setInterval(() => {
               const now = Date.now();
@@ -878,7 +901,6 @@ def run():
           return () => clearInterval(interval);
       }, []);
 
-      // Raccourcis Clavier globaux : Ctrl+Z & Ctrl+Y
       useEffect(() => {
         const handleKeyDown = (e) => {
           if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
@@ -912,7 +934,6 @@ def run():
           if (socketRef.current) socketRef.current.emit('cursor_moved', cursorData);
       };
 
-      // --- LOGIQUE HISTORIQUE (Undo / Redo) -> Utilise la méthode forte car on veut reset la map ---
       const handleSnapshot = () => {
         if (!currentNbId) return;
         setServerData(currentData => {
@@ -959,7 +980,6 @@ def run():
         setSelectedCellId(null);
       };
 
-      // --- Authentification ---
       const handleAuth = async (e) => {
         e.preventDefault();
         const trimmedUsername = inputUsername.trim();
@@ -1067,7 +1087,7 @@ def run():
         const myData = (serverData.users || []).find(u => u.id === user.uid);
         const newNbId = generateUUID();
         const templateCells = (serverData.cells || []).filter(c => c.notebookId === templateNb.id);
-        const newCells = templateCells.map(c => ({ ...c, id: generateUUID(), notebookId: newNbId, output: '', status: 'idle', locked: c.locked }));
+        const newCells = templateCells.map(c => ({ ...c, id: generateUUID(), notebookId: newNbId, output: '', status: 'idle', locked: c.locked, executionCount: null }));
 
         updateServerFullSync(data => {
           const newNb = { 
@@ -1117,7 +1137,14 @@ def run():
             if (cell.cell_type === 'markdown') cellType = 'markdown';
             else if (cell.cell_type === 'raw') cellType = 'raw';
             else if (cell.cell_type === 'heading') cellType = 'heading';
-            importedCells.push({ id: generateUUID(), notebookId: targetNbId, code: code, type: cellType, output: '', status: 'idle', order: currentOrder, locked: false });
+            
+            let executionCount = cell.execution_count || null;
+            let output = '';
+            if (cell.outputs && cell.outputs.length > 0) {
+               output = cell.outputs.map(o => o.text ? (Array.isArray(o.text) ? o.text.join('') : o.text) : '').join('');
+            }
+            
+            importedCells.push({ id: generateUUID(), notebookId: targetNbId, code: code, type: cellType, output: output, status: 'idle', order: currentOrder, locked: false, executionCount: executionCount });
             currentOrder += 10;
           });
         }
@@ -1241,14 +1268,13 @@ for key in list(globals().keys()):
         else delete cellRunRefs.current[id];
       };
 
-      // --- Actions Cellules ---
       const handleAddCell = () => {
         if (!user || !currentNbId) return;
         handleSnapshot();
         const newCellId = generateUUID();
         const nbCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId);
         const newOrder = nbCells.length > 0 ? Math.max(...nbCells.map(c => c.order)) + 10 : 10;
-        const newCell = { id: newCellId, notebookId: currentNbId, code: '', type: 'code', output: '', status: 'idle', order: newOrder, locked: false };
+        const newCell = { id: newCellId, notebookId: currentNbId, code: '', type: 'code', output: '', status: 'idle', order: newOrder, locked: false, executionCount: null };
         
         dispatchServerAction({ type: 'ADD_CELL', payload: newCell });
         setSelectedCellId(newCellId);
@@ -1281,29 +1307,54 @@ for key in list(globals().keys()):
          dispatchServerAction({ type: 'UPDATE_CELL', payload: { cellId, data: dataToUpdate } });
       };
 
-      // NOUVEAU: MÀJ du code ultra-rapide et chirurgicale !
       const handleUpdateCellCode = (cellId, fullCode, changes) => {
-         // Applique localement (UI optimiste)
          setServerData(prev => applyActionToState(prev, { type: 'UPDATE_CELL', payload: { cellId, data: { code: fullCode } } }));
-         // Émet sur le canal dédié
          if (socketRef.current) {
             socketRef.current.emit('cell_edit_operations', { cellId, code: fullCode, changes });
          }
       };
 
+      // NOUVEAU: Génération propre d'un vrai fichier .ipynb formaté Jupyter
       const handleDownload = () => {
         const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId);
         const nbCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
-        const combinedCode = nbCells.map((c, index) => {
-          if (c.type === 'markdown' || c.type === 'heading' || c.type === 'raw') return `# --- TEXT ---\n` + c.code.split('\n').map(line => `# ${line}`).join('\n');
-          return `# --- Cellule ${index + 1} ---\n${c.code}`;
-        }).join('\n\n');
         
-        const blob = new Blob([combinedCode], { type: 'text/plain' });
+        const ipynb = {
+          metadata: {
+            language_info: { name: "python", version: "3" },
+            collab_notebook: { title: activeNotebook?.title || "Notebook" }
+          },
+          nbformat: 4,
+          nbformat_minor: 4,
+          cells: nbCells.map((c) => {
+             const cellType = (c.type === 'markdown' || c.type === 'heading') ? 'markdown' : (c.type === 'raw' ? 'raw' : 'code');
+             const sourceLines = c.code ? c.code.split('\n').map((line, i, arr) => line + (i < arr.length - 1 ? '\n' : '')) : [];
+             
+             let cell = {
+               cell_type: cellType,
+               metadata: {},
+               source: sourceLines
+             };
+             
+             if (cellType === 'code') {
+               cell.execution_count = c.executionCount || null;
+               cell.outputs = c.output ? [
+                  {
+                     name: "stdout",
+                     output_type: "stream",
+                     text: c.output.split('\n').map((line, i, arr) => line + (i < arr.length - 1 ? '\n' : ''))
+                  }
+               ] : [];
+             }
+             return cell;
+          })
+        };
+        
+        const blob = new Blob([JSON.stringify(ipynb, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${activeNotebook?.title || 'notebook_export'}.py`;
+        a.download = `${activeNotebook?.title || 'notebook_export'}.ipynb`;
         a.click();
         URL.revokeObjectURL(url);
       };
@@ -1311,7 +1362,7 @@ for key in list(globals().keys()):
       const handleCopyCell = () => {
           const selectedCell = (serverData.cells || []).find(c => c.id === selectedCellId);
           if (!selectedCell) return;
-          setClipboardCell({ ...selectedCell, id: undefined, notebookId: undefined, output: '', status: 'idle' });
+          setClipboardCell({ ...selectedCell, id: undefined, notebookId: undefined, output: '', status: 'idle', executionCount: null });
       };
 
       const handleCutCell = () => {
@@ -1322,7 +1373,7 @@ for key in list(globals().keys()):
           const hasAdminRights = userData?.role === 'admin' || userData?.role === 'prof';
           if (selectedCell.locked && (!activeNotebook?.permissions || activeNotebook.permissions.canUnlock === false) && !hasAdminRights) return;
           
-          setClipboardCell({ ...selectedCell, id: undefined, notebookId: undefined, output: '', status: 'idle' });
+          setClipboardCell({ ...selectedCell, id: undefined, notebookId: undefined, output: '', status: 'idle', executionCount: null });
           handleDeleteCell(selectedCell.id);
       };
 
@@ -1346,7 +1397,12 @@ for key in list(globals().keys()):
           setSelectedCellId(newCellId);
       };
 
-      // --- Variables d'affichage ---
+      const getNextExecutionCount = () => {
+          const nbCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId);
+          const maxCount = Math.max(0, ...nbCells.map(c => c.executionCount || 0));
+          return maxCount + 1;
+      };
+
       const userData = user ? (serverData.users || []).find(u => u.id === user.uid) : null;
       const myNotebooks = (serverData.notebooks || []).filter(n => n.ownerUid === user?.uid);
       const sharedNotebooks = userData ? (serverData.notebooks || []).filter(n => n.sharedWith.includes(userData.username)) : [];
@@ -1600,18 +1656,8 @@ for key in list(globals().keys()):
         );
       }
 
-      // STYLES DYNAMIQUES POUR LES CURSEURS ET SELECTIONS MULTIJOUEURS
-      const cursorStyles = Object.entries(remoteCursorsState)
-        .filter(([uid, c]) => uid !== user?.uid)
-        .map(([uid, c]) => `
-          .remote-cursor-${uid} { border-left: 2px solid ${c.color} !important; position: absolute; z-index: 10; margin-left: -1px; }
-          .remote-cursor-${uid}::after { content: "${c.username}"; position: absolute; top: -16px; left: 0px; background-color: ${c.color}; color: white; font-size: 10px; padding: 1px 4px; border-radius: 3px; white-space: nowrap; pointer-events: none; opacity: 0.9; }
-          .remote-selection-${uid} { background-color: ${c.color}40 !important; }
-        `).join('\n');
-
       return (
         <div className="min-h-screen transition-colors flex flex-col">
-          <style>{cursorStyles}</style>
           
           <div className="sticky top-0 z-[1000] flex flex-col shadow-md">
             <nav className="bg-white dark:bg-[#161b22] border-b border-gray-200 dark:border-slate-700/50 px-2 sm:px-4 py-2 flex flex-wrap gap-2 items-center justify-between">
@@ -1657,7 +1703,7 @@ for key in list(globals().keys()):
                      </>
                   )}
 
-                  <button onClick={handleDownload} className="flex items-center gap-2 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors" title="Exporter en .py"><Download size={16} /> <span className="hidden md:inline">Exporter</span></button>
+                  <button onClick={handleDownload} className="flex items-center gap-2 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors" title="Exporter en .ipynb"><Download size={16} /> <span className="hidden md:inline">Exporter</span></button>
                   
                   {canGenCodeNotebook && (
                     <button onClick={openCodeModal} className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors shadow-sm" title="Créer un code et configurer le notebook"><Key size={16} /> <span className="hidden md:inline">Générer code</span></button>
@@ -1722,7 +1768,7 @@ for key in list(globals().keys()):
                      </button>
                    )}
                    {selectedCell.type === 'code' && (
-                      <button onClick={() => handleUpdateCellProperty(selectedCell.id, { output: '', status: 'idle' })} disabled={!selectedCell.output && selectedCell.status !== 'error'} className="flex items-center gap-1.5 px-2 py-1.5 text-gray-600 dark:text-slate-300 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-[#3c3c3c] disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Effacer la console">
+                      <button onClick={() => handleUpdateCellProperty(selectedCell.id, { output: '', status: 'idle', executionCount: null })} disabled={!selectedCell.output && selectedCell.status !== 'error'} className="flex items-center gap-1.5 px-2 py-1.5 text-gray-600 dark:text-slate-300 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-[#3c3c3c] disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Effacer la console">
                          <XCircle size={14} /> <span className="hidden sm:inline">Effacer console</span>
                       </button>
                    )}
@@ -1774,6 +1820,7 @@ for key in list(globals().keys()):
                     handleSnapshot={handleSnapshot}
                     isDark={isDark}
                     hasAdminRights={hasAdminRights}
+                    getNextExecutionCount={getNextExecutionCount}
                   />
                 )})}
                 {(canCreateCellsNotebook || hasAdminRights) && (
