@@ -1,4 +1,14 @@
-// ... existing code ...
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const { MongoClient } = require('mongodb');
+const path = require('path');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, { cors: { origin: '*' } });
+
+// Le lien sera fourni par Render de manière sécurisée
 const MONGO_URI = process.env.MONGO_URI; 
 const DB_NAME = "collab_db";
 
@@ -57,7 +67,9 @@ initDB();
 
 // --- ROUTE API INITIALE ---
 app.get('/api/data', (req, res) => {
-// ... existing code ...
+    res.json(globalData);
+});
+
 // --- GESTION DU TEMPS RÉEL ---
 io.on('connection', (socket) => {
     console.log('Nouvel utilisateur connecté:', socket.id);
@@ -170,4 +182,16 @@ io.on('connection', (socket) => {
     });
 
     // Relais ultra-rapide pour les curseurs multijoueurs
-// ... existing code ...
+    socket.on('cursor_moved', (cursorData) => {
+        socket.broadcast.emit('cursor_updated', cursorData);
+    });
+
+    socket.on('disconnect', () => {
+        console.log('Utilisateur déconnecté:', socket.id);
+    });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`🚀 Serveur temps réel démarré sur le port ${PORT}`);
+});
