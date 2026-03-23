@@ -46,19 +46,6 @@
     .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(128, 128, 128, 0.5); }
     .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); }
     .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); }
-
-    .remote-cursor-label {
-        pointer-events: none;
-        user-select: none;
-    }
-    
-    .pulse-presence {
-      animation: pulse-presence 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-    }
-    @keyframes pulse-presence {
-      0%, 100% { opacity: 1; }
-      50% { opacity: .5; }
-    }
   </style>
 
   <script type="importmap">
@@ -84,14 +71,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useRef, useMemo } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { 
-        Play, Plus, Trash2, Loader2, Users, Terminal, Code2, CheckCircle2, 
-        ArrowLeft, Share2, BookOpen, User, Lock, Edit2, Download, 
-        ArrowUp, ArrowDown, XCircle, Upload, LogOut, Key, Unlock, 
-        X, RotateCcw, RotateCw, Settings, Moon, Sun, Copy as CopyIcon, 
-        Scissors, ClipboardPaste, Shield, GraduationCap, AlignLeft, 
-        AlignCenter, AlignRight, Search, Eye, Info, Check, ToggleLeft, ToggleRight
-    } from 'lucide-react';
+    import { Play, Plus, Trash2, Loader2, Users, Terminal, Code2, CheckCircle2, ArrowLeft, Share2, BookOpen, User, Lock, Edit2, Download, ArrowUp, ArrowDown, XCircle, Upload, LogOut, Key, Unlock, X, RotateCcw, RotateCw, Settings, Moon, Sun, Copy as CopyIcon, Scissors, ClipboardPaste, Shield, GraduationCap, AlignLeft, AlignCenter, AlignRight, Search, Eye } from 'lucide-react';
     import { marked } from 'marked';
 
     const DB_URL = 'db.json';       
@@ -213,6 +193,7 @@
             
             if (isMounted) {
               await py.loadPackage("micropip");
+              // VERSION ROBUSTE: try/except dans setup et draw pour éviter de crasher le noyau wasm
               const p5_code = `
 import js
 import __main__
@@ -271,7 +252,7 @@ def run():
                 except Exception as e:
                     import traceback
                     print(f"Erreur P5 (draw): {e}")
-                    p.noLoop()
+                    p.noLoop() # Arrête la boucle pour éviter de spammer la console
             
         p.setup = create_proxy(_setup)
         if draw_fn and callable(draw_fn): 
@@ -333,6 +314,7 @@ def run():
       return isReady;
     };
 
+    // --- MONACO EDITOR REFAIT POUR SYNCHRONISATION CHIRURGICALE ---
     const MonacoEditor = ({ cellId, value, onChangeCode, onSilentUpdate, onFocus, onBlur, onRun, language = 'python', readOnly = false, isDark, onCursorChange, remoteCursors = [] }) => {
       const editorContainerRef = useRef(null);
       const editorRef = useRef(null);
@@ -519,7 +501,8 @@ def run():
       );
     };
 
-    const Cell = ({ cell, isSelected, onSelect, onUpdateProperty, onUpdateCode, onUpdateCursor, remoteCursors, pyodide, isPyodideLoading, isMonacoReady, registerRun, handleSnapshot, isDark, hasAdminRights, getNextExecutionCount, userPermissions }) => {
+    // --- CELLULE ---
+    const Cell = ({ cell, isSelected, onSelect, onUpdateProperty, onUpdateCode, onUpdateCursor, remoteCursors, pyodide, isPyodideLoading, isMonacoReady, registerRun, handleSnapshot, isDark, hasAdminRights, getNextExecutionCount, readOnlyMode }) => {
       const cellType = cell.type || 'code';
       const isLocked = cell.locked || false;
       const isCode = cellType === 'code';
@@ -528,9 +511,7 @@ def run():
       const [isFocused, setIsFocused] = useState(false);
       const [isEditingContent, setIsEditingContent] = useState((cellType === 'markdown' || cellType === 'heading') ? !cell.code : false);
 
-      const canUserEdit = hasAdminRights || userPermissions?.canEdit !== false;
-      const canUserUnlock = hasAdminRights || userPermissions?.canUnlock !== false;
-      const enforceLock = isLocked && !canUserUnlock;
+      const enforceLock = isLocked || readOnlyMode;
 
       useEffect(() => {
         if (cell.code !== localCode) {
@@ -539,7 +520,7 @@ def run():
       }, [cell.code]);
 
       const handleCodeChange = (newValue, changes) => {
-        if (enforceLock || !canUserEdit) return;
+        if (enforceLock) return;
         setLocalCode(newValue); 
         
         if (changes && onUpdateCode) {
@@ -577,6 +558,7 @@ def run():
         pyodide.setStderr({ batched: (msg) => currentOutput += msg + "\n" });
         
         try {
+          // NOUVEAU: Nettoie le cache de p5 de la précédente exécution
           await pyodide.runPythonAsync(`
 try:
     if 'setup' in globals(): del globals()['setup']
@@ -618,7 +600,7 @@ except Exception:
               onClick={() => onSelect(cell.id)}
             >
               <div className="flex items-center justify-end bg-gray-100 dark:bg-[#252526] pr-2 py-1 select-none border-b border-gray-200 dark:border-[#3c3c3c]">
-                 {isLocked && <Lock size={12} className={`mr-auto ml-2 ${hasAdminRights ? 'text-emerald-500/80' : 'text-amber-500/50'}`} title="Cellule Verrouillée" />}
+                 {(isLocked || readOnlyMode) && <Lock size={12} className={`mr-auto ml-2 ${hasAdminRights && !readOnlyMode ? 'text-emerald-500/80' : 'text-amber-500/50'}`} title={readOnlyMode ? "Mode Lecture Seule" : "Cellule Verrouillée"} />}
                  <button onClick={(e) => { e.stopPropagation(); handleRun(); }} disabled={isPyodideLoading || !pyodide} className="p-1.5 text-gray-600 dark:text-[#cccccc] hover:bg-gray-300 dark:hover:bg-[#333333] hover:text-primary-500 rounded transition-colors disabled:opacity-50 flex items-center gap-1 text-xs font-medium" title="Exécuter (Run) ou Maj+Entrée">
                     {cell.status === 'running' ? <Loader2 size={14} className="animate-spin text-amber-500" /> : <Play size={14} />}
                     <span className="hidden sm:inline">Exécuter</span>
@@ -636,7 +618,7 @@ except Exception:
                         onFocus={() => setIsFocused(true)} 
                         onBlur={() => setIsFocused(false)} 
                         onRun={handleRun} 
-                        readOnly={enforceLock || !canUserEdit} 
+                        readOnly={enforceLock} 
                         isDark={isDark} 
                         onCursorChange={(posInfo) => onUpdateCursor(cell.id, posInfo)}
                         remoteCursors={remoteCursors}
@@ -683,12 +665,12 @@ except Exception:
           >
             <div className={`relative ${isLocked ? 'bg-gray-50 dark:bg-slate-900/30 rounded' : ''}`}>
                
-               {isLocked && <Lock size={12} className={`absolute top-2 right-2 ${hasAdminRights ? 'text-emerald-500/80' : 'text-amber-500/50'}`} title={hasAdminRights ? "Verrouillé (Ignoré)" : "Verrouillé"} />}
+               {(isLocked || readOnlyMode) && <Lock size={12} className={`absolute top-2 right-2 ${hasAdminRights && !readOnlyMode ? 'text-emerald-500/80' : 'text-amber-500/50'}`} title={readOnlyMode ? "Mode Lecture Seule" : "Verrouillé"} />}
 
                {cellType === 'markdown' && !isEditingContent && (
                  <div 
                    className={`p-4 prose dark:prose-invert max-w-none min-h-[40px] cursor-text ${alignClass}`}
-                   onDoubleClick={() => { if(!enforceLock && canUserEdit) setIsEditingContent(true); }}
+                   onDoubleClick={() => { if(!enforceLock) setIsEditingContent(true); }}
                    dangerouslySetInnerHTML={{ __html: safeMarked(localCode || '*Double-cliquez ici pour éditer...*') }}
                  />
                )}
@@ -696,7 +678,7 @@ except Exception:
                {cellType === 'heading' && !isEditingContent && (
                  <div 
                    className={`px-4 py-4 cursor-text ${alignClass}`}
-                   onDoubleClick={() => { if(!enforceLock && canUserEdit) setIsEditingContent(true); }}
+                   onDoubleClick={() => { if(!enforceLock) setIsEditingContent(true); }}
                  >
                     <h2 className="text-2xl font-bold text-gray-900 dark:text-slate-100">{localCode || 'Titre vide (double-cliquez pour éditer)'}</h2>
                  </div>
@@ -714,7 +696,7 @@ except Exception:
                         onFocus={() => setIsFocused(true)} 
                         onBlur={() => setIsFocused(false)} 
                         onRun={handleRun} 
-                        readOnly={enforceLock || !canUserEdit} 
+                        readOnly={enforceLock} 
                         isDark={isDark} 
                      />
                    </div>
@@ -748,8 +730,6 @@ except Exception:
       const [searchQuery, setSearchQuery] = useState('');
       const [shareUsername, setShareUsername] = useState('');
       const [showShareSuggestions, setShowShareSuggestions] = useState(false);
-
-      const lastCursorInfoRef = useRef(null);
 
       const getThemeHex = (color) => {
         const colors = { indigo: '#6366f1', emerald: '#10b981', rose: '#f43f5e', amber: '#f59e0b', purple: '#a855f7' };
@@ -844,6 +824,7 @@ except Exception:
         });
       };
 
+      // Fonction propre pour injecter les styles de curseurs distants (Évite les lags)
       const injectCursorStyle = (uid, username, color) => {
           const styleId = `cursor-style-${uid}`;
           if (!document.getElementById(styleId)) {
@@ -912,7 +893,7 @@ except Exception:
                   let changed = false;
                   const next = { ...prev };
                   for (const uid in next) {
-                      if (now - next[uid].timestamp > 15000) { delete next[uid]; changed = true; }
+                      if (now - next[uid].timestamp > 10000) { delete next[uid]; changed = true; }
                   }
                   return changed ? next : prev;
               });
@@ -943,28 +924,15 @@ except Exception:
           const cursorData = {
               userId: user.uid,
               cellId,
-              notebookId: currentNbId,
-              lineNumber: positionInfo?.lineNumber || 1,
-              column: positionInfo?.column || 1,
-              selection: positionInfo?.selection || null,
+              lineNumber: positionInfo.lineNumber,
+              column: positionInfo.column,
+              selection: positionInfo.selection,
               username: userData.username,
               color: getUserColor(user.uid),
               timestamp: Date.now()
           };
           if (socketRef.current) socketRef.current.emit('cursor_moved', cursorData);
-          lastCursorInfoRef.current = { cellId, positionInfo };
       };
-
-      useEffect(() => {
-          if (!user || !currentNbId || !userData) return;
-          const heartbeat = () => {
-              const info = lastCursorInfoRef.current;
-              handleUpdateCursor(info?.cellId || null, info?.positionInfo || null);
-          };
-          const interval = setInterval(heartbeat, 5000);
-          heartbeat();
-          return () => clearInterval(interval);
-      }, [user, currentNbId, userData]);
 
       const handleSnapshot = () => {
         if (!currentNbId) return;
@@ -985,9 +953,11 @@ except Exception:
         updateServerFullSync(currentData => {
            const previousStateStr = historyPast[historyPast.length - 1];
            const previousCells = JSON.parse(previousStateStr);
+           
            const currentNbCells = (currentData.cells || []).filter(c => c.notebookId === currentNbId);
            setHistoryFuture(f => [JSON.stringify(currentNbCells), ...f]);
            setHistoryPast(p => p.slice(0, -1));
+           
            const otherCells = (currentData.cells || []).filter(c => c.notebookId !== currentNbId);
            return { ...currentData, cells: [...otherCells, ...previousCells] };
         });
@@ -999,9 +969,11 @@ except Exception:
         updateServerFullSync(currentData => {
            const nextStateStr = historyFuture[0];
            const nextCells = JSON.parse(nextStateStr);
+           
            const currentNbCells = (currentData.cells || []).filter(c => c.notebookId === currentNbId);
            setHistoryPast(p => [...p, JSON.stringify(currentNbCells)]);
            setHistoryFuture(f => f.slice(1));
+           
            const otherCells = (currentData.cells || []).filter(c => c.notebookId !== currentNbId);
            return { ...currentData, cells: [...otherCells, ...nextCells] };
         });
@@ -1012,12 +984,22 @@ except Exception:
         e.preventDefault();
         const trimmedUsername = inputUsername.trim();
         if (!trimmedUsername || !inputPassword) return;
-        if (authMode === 'register' && inputPassword !== inputPasswordConfirm) { alert("Les mots de passe ne correspondent pas !"); return; }
-        const hashed = await hashPassword(inputPassword);
+
         if (authMode === 'register') {
-          if ((serverData.users || []).some(u => u.username.toLowerCase() === trimmedUsername.toLowerCase())) { alert("Ce pseudo est déjà pris !"); return; }
+          if (inputPassword !== inputPasswordConfirm) { alert("Les mots de passe ne correspondent pas !"); return; }
+        }
+
+        const hashed = await hashPassword(inputPassword);
+
+        if (authMode === 'register') {
+          if ((serverData.users || []).some(u => u.username.toLowerCase() === trimmedUsername.toLowerCase())) { 
+            alert("Ce pseudo est déjà pris !"); return; 
+          }
           const newUid = generateUUID();
-          dispatchServerAction({ type: 'ADD_USER', payload: { id: newUid, username: trimmedUsername, password: hashed, email: '', description: '', role: 'eleve' } });
+          dispatchServerAction({
+              type: 'ADD_USER',
+              payload: { id: newUid, username: trimmedUsername, password: hashed, email: '', description: '', role: 'eleve' }
+          });
           localStorage.setItem('collab_notebook_uid', newUid);
           setUser({ uid: newUid });
         } else {
@@ -1040,13 +1022,15 @@ except Exception:
         const trimmedUsername = profileForm.username.trim();
         const userData = (serverData.users || []).find(u => u.id === user.uid);
         if (!userData || !trimmedUsername) return;
+
         let hashedPw = userData.password;
         if (profileForm.newPassword) {
-            if (!profileForm.oldPassword) { alert("Veuillez entrer votre ancien mot de passe."); return; }
+            if (!profileForm.oldPassword) { alert("Veuillez entrer votre ancien mot de passe pour le modifier."); return; }
             const oldHashed = await hashPassword(profileForm.oldPassword);
-            if (oldHashed !== userData.password) { alert("Ancien mot de passe incorrect !"); return; }
+            if (oldHashed !== userData.password) { alert("L'ancien mot de passe est incorrect !"); return; }
             hashedPw = await hashPassword(profileForm.newPassword);
         }
+
         updateServerFullSync(data => {
             if (trimmedUsername !== userData.username && (data.users || []).some(u => u.id !== user.uid && u.username.toLowerCase() === trimmedUsername.toLowerCase())) {
                 alert("Ce pseudo est déjà pris !"); return data; 
@@ -1057,11 +1041,10 @@ except Exception:
                 newNotebooks = newNotebooks.map(nb => {
                     let updatedNb = { ...nb };
                     if (nb.ownerUid === user.uid) updatedNb.ownerUsername = trimmedUsername;
-                    if (Array.isArray(nb.sharedWith)) {
+                    if (nb.sharedWith.some(s => (typeof s === 'string' ? s : s.username) === userData.username)) {
                         updatedNb.sharedWith = nb.sharedWith.map(s => {
                             if (typeof s === 'string') return s === userData.username ? trimmedUsername : s;
-                            if (s.username === userData.username) return { ...s, username: trimmedUsername };
-                            return s;
+                            return s.username === userData.username ? { ...s, username: trimmedUsername } : s;
                         });
                     }
                     return updatedNb;
@@ -1079,7 +1062,10 @@ except Exception:
         if (inputTitle === null) return; 
         const title = inputTitle.trim() || "Nouveau Notebook";
         const newNbId = generateUUID();
-        dispatchServerAction({ type: 'ADD_NOTEBOOK', payload: { id: newNbId, title, ownerUid: user.uid, ownerUsername: myData.username, sharedWith: [], createdAt: new Date().toISOString() } });
+        dispatchServerAction({
+            type: 'ADD_NOTEBOOK',
+            payload: { id: newNbId, title, ownerUid: user.uid, ownerUsername: myData.username, sharedWith: [], createdAt: new Date().toISOString() }
+        });
         setCurrentNbId(newNbId);
         setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null);
       };
@@ -1088,16 +1074,30 @@ except Exception:
         e.preventDefault();
         const code = joinCode.trim().toUpperCase();
         if (!code) return;
-        if (code === '1435') { dispatchServerAction({ type: 'UPDATE_USER', payload: { userId: user.uid, data: { role: 'admin' } } }); alert("🔐 Administrateur !"); setJoinCode(''); return; }
-        if (code === 'PROFCOLLAB') { dispatchServerAction({ type: 'UPDATE_USER', payload: { userId: user.uid, data: { role: 'prof' } } }); alert("🎓 Professeur !"); setJoinCode(''); return; }
+
+        if (code === '1435') {
+            dispatchServerAction({ type: 'UPDATE_USER', payload: { userId: user.uid, data: { role: 'admin' } } });
+            alert("🔐 Succès : Privilèges Administrateur !"); setJoinCode(''); return;
+        }
+        if (code === 'PROFCOLLAB') {
+            dispatchServerAction({ type: 'UPDATE_USER', payload: { userId: user.uid, data: { role: 'prof' } } });
+            alert("🎓 Succès : Privilèges Professeur !"); setJoinCode(''); return;
+        }
+
         const templateNb = (serverData.notebooks || []).find(n => n.accessCode === code);
         if (!templateNb) { alert("Code invalide."); return; }
+
         const myData = (serverData.users || []).find(u => u.id === user.uid);
         const newNbId = generateUUID();
         const templateCells = (serverData.cells || []).filter(c => c.notebookId === templateNb.id);
         const newCells = templateCells.map(c => ({ ...c, id: generateUUID(), notebookId: newNbId, output: '', status: 'idle', locked: c.locked, executionCount: null }));
+
         updateServerFullSync(data => {
-          const newNb = { id: newNbId, title: `Exercice : ${templateNb.title}`, ownerUid: user.uid, ownerUsername: myData.username, sharedWith: [], createdAt: new Date().toISOString(), permissions: templateNb.studentPermissions || { canUnlock: true, canCreate: true, canShare: true, canGenerateCode: true }, templateSourceId: templateNb.id, templateOwnerUid: templateNb.ownerUid };
+          const newNb = { 
+            id: newNbId, title: `Exercice : ${templateNb.title}`, ownerUid: user.uid, ownerUsername: myData.username, sharedWith: [], createdAt: new Date().toISOString(),
+            permissions: templateNb.studentPermissions || { canUnlock: true, canCreate: true, canShare: true, canGenerateCode: true },
+            templateSourceId: templateNb.id, templateOwnerUid: templateNb.ownerUid
+          };
           return { ...data, notebooks: [...(data.notebooks || []), newNb], cells: [...(data.cells || []), ...newCells] };
         });
         setCurrentNbId(newNbId); setJoinCode('');
@@ -1118,9 +1118,16 @@ except Exception:
         dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { accessCode: code, studentPermissions: codePermissions } } });
       };
 
-      const handleDisableAccessCode = () => { if (!currentNbId) return; dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { accessCode: null } } }); };
+      const handleDisableAccessCode = () => {
+          if (!currentNbId) return;
+          dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { accessCode: null } } });
+      };
 
-      const handleSavePermissions = () => { if (!currentNbId) return; dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { studentPermissions: codePermissions } } }); setIsCodeModalOpen(false); };
+      const handleSavePermissions = () => {
+          if (!currentNbId) return;
+          dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { studentPermissions: codePermissions } } });
+          setIsCodeModalOpen(false);
+      };
 
       const processImportedFile = (fileContent, title, targetNbId) => {
         const ipynb = JSON.parse(fileContent);
@@ -1129,12 +1136,23 @@ except Exception:
         if (ipynb.cells && Array.isArray(ipynb.cells)) {
           ipynb.cells.forEach(cell => {
             let code = Array.isArray(cell.source) ? cell.source.join('') : (cell.source || '');
-            let cellType = cell.cell_type === 'markdown' ? 'markdown' : (cell.cell_type === 'raw' ? 'raw' : (cell.cell_type === 'heading' ? 'heading' : 'code'));
-            importedCells.push({ id: generateUUID(), notebookId: targetNbId, code: code, type: cellType, output: '', status: 'idle', order: currentOrder, locked: false, executionCount: null });
+            let cellType = 'code';
+            if (cell.cell_type === 'markdown') cellType = 'markdown';
+            else if (cell.cell_type === 'raw') cellType = 'raw';
+            else if (cell.cell_type === 'heading') cellType = 'heading';
+            
+            let executionCount = cell.execution_count || null;
+            let output = '';
+            if (cell.outputs && cell.outputs.length > 0) {
+               output = cell.outputs.map(o => o.text ? (Array.isArray(o.text) ? o.text.join('') : o.text) : '').join('');
+            }
+            
+            importedCells.push({ id: generateUUID(), notebookId: targetNbId, code: code, type: cellType, output: output, status: 'idle', order: currentOrder, locked: false, executionCount: executionCount });
             currentOrder += 10;
           });
         }
-        return importedCells.length > 0 ? importedCells : [{ id: generateUUID(), notebookId: targetNbId, code: '', type: 'code', output: '', status: 'idle', order: 10 }];
+        if (importedCells.length === 0) importedCells.push({ id: generateUUID(), notebookId: targetNbId, code: '', type: 'code', output: '', status: 'idle', order: 10 });
+        return importedCells;
       };
 
       const handleImportNotebook = (e) => {
@@ -1144,15 +1162,18 @@ except Exception:
         reader.onload = (event) => {
           try {
             const myData = (serverData.users || []).find(u => u.id === user.uid);
+            if (!user || !myData) return;
             const newNbId = generateUUID();
             const title = file.name.replace(/\.ipynb$/i, '');
             const importedCells = processImportedFile(event.target.result, title, newNbId);
+
             updateServerFullSync(data => {
               const newNb = { id: newNbId, title: title, ownerUid: user.uid, ownerUsername: myData.username, sharedWith: [], createdAt: new Date().toISOString() };
               return { ...data, notebooks: [...(data.notebooks || []), newNb], cells: [...(data.cells || []), ...importedCells] };
             });
             setCurrentNbId(newNbId);
-          } catch (err) { alert("Fichier invalide."); }
+            setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null);
+          } catch (err) { alert("Erreur d'importation. Fichier invalide."); }
           e.target.value = null;
         };
         reader.readAsText(file);
@@ -1161,7 +1182,8 @@ except Exception:
       const handleImportIntoCurrentNotebook = (e) => {
         const file = e.target.files[0];
         if (!file || !currentNbId) return;
-        if (!window.confirm("Remplacer le contenu ?")) { e.target.value = null; return; }
+        if (!window.confirm("Remplacer tout le contenu actuel par le fichier importé ?")) { e.target.value = null; return; }
+        
         handleSnapshot(); 
         const reader = new FileReader();
         reader.onload = (event) => {
@@ -1173,6 +1195,7 @@ except Exception:
               const updatedNotebooks = (data.notebooks || []).map(n => n.id === currentNbId ? { ...n, title: title } : n);
               return { ...data, notebooks: updatedNotebooks, cells: [...filteredCells, ...importedCells] };
             });
+            setSelectedCellId(null);
           } catch (err) { alert("Erreur d'importation."); }
           e.target.value = null;
         };
@@ -1182,16 +1205,19 @@ except Exception:
       const handleRenameNotebook = (newTitle) => {
         if (!newTitle.trim() || !user || !currentNbId) return setIsEditingTitle(false);
         const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId);
+        const userData = (serverData.users || []).find(u => u.id === user.uid);
+        const hasAdminRights = userData?.role === 'admin' || userData?.role === 'prof';
         if (activeNotebook?.ownerUid !== user.uid && !hasAdminRights) { alert("Seul le propriétaire peut renommer."); setIsEditingTitle(false); return; }
+        
         dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { title: newTitle.trim() } } });
         setIsEditingTitle(false);
       };
 
       const handleDeleteNotebook = (e, nbId) => {
         if (e) { e.preventDefault(); e.stopPropagation(); }
-        if (window.confirm("Supprimer ce notebook ?")) {
+        if (window.confirm("Êtes-vous sûr de vouloir supprimer définitivement ce notebook ?")) {
           dispatchServerAction({ type: 'DELETE_NOTEBOOK', payload: { notebookId: nbId } });
-          if (currentNbId === nbId) { setCurrentNbId(null); }
+          if (currentNbId === nbId) { setCurrentNbId(null); setSelectedCellId(null); setHistoryPast([]); setHistoryFuture([]); }
         }
       };
 
@@ -1200,121 +1226,233 @@ except Exception:
         if (!currentNbId || !shareUsername.trim()) return;
         const targetUser = (serverData.users || []).find(u => u.username.toLowerCase() === shareUsername.toLowerCase());
         if (!targetUser) { alert("Utilisateur introuvable !"); return; }
+        
         const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId);
-        if (activeNotebook) {
-            const isAlreadyShared = activeNotebook.sharedWith.some(s => (typeof s === 'string' ? s : s.username) === targetUser.username);
-            if (!isAlreadyShared) {
-                const newMember = { username: targetUser.username, uid: targetUser.id, permissions: { canEdit: true, canDelete: true, canUnlock: false, canShare: false, canCreate: true } };
-                dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { sharedWith: [...activeNotebook.sharedWith, newMember] } } });
-            }
+        if (activeNotebook && !activeNotebook.sharedWith.some(s => (typeof s === 'string' ? s : s.username) === targetUser.username)) {
+            dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { sharedWith: [...activeNotebook.sharedWith, { username: targetUser.username, role: 'reader' }] } } });
         }
         setShareUsername('');
       };
 
-      const handleRemoveShare = (u) => { if (!currentNbId) return; const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId); if (activeNotebook) { dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { sharedWith: activeNotebook.sharedWith.filter(s => (typeof s === 'string' ? s : s.username) !== u) } } }); } };
+      const handleRemoveShare = (usernameToRemove) => {
+        if (!currentNbId) return;
+        const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId);
+        if (activeNotebook) {
+            dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { sharedWith: activeNotebook.sharedWith.filter(s => (typeof s === 'string' ? s : s.username) !== usernameToRemove) } } });
+        }
+      };
 
-      const handleUpdateMemberPermissions = (username, newPermissions) => {
-          if (!currentNbId) return;
-          const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId);
-          if (activeNotebook) {
-              const newSharedWith = activeNotebook.sharedWith.map(s => {
-                  const sUsername = typeof s === 'string' ? s : s.username;
-                  if (sUsername === username) {
-                      const existing = typeof s === 'string' ? { canEdit: true, canDelete: true, canUnlock: true, canShare: true, canCreate: true } : s.permissions;
-                      return { username: sUsername, permissions: { ...existing, ...newPermissions } };
-                  }
-                  return s;
-              });
-              dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { sharedWith: newSharedWith } } });
-          }
+      const handleToggleShareRole = (username) => {
+        if (!currentNbId) return;
+        const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId);
+        if (!activeNotebook) return;
+        const newSharedWith = activeNotebook.sharedWith.map(s => {
+          const sName = typeof s === 'string' ? s : s.username;
+          const sRole = typeof s === 'string' ? 'editor' : (s.role || 'editor');
+          if (sName === username) return { username: sName, role: sRole === 'editor' ? 'reader' : 'editor' };
+          return typeof s === 'string' ? { username: s, role: 'editor' } : s;
+        });
+        dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { sharedWith: newSharedWith } } });
       };
 
       const handleRestartKernel = async () => {
         if (!pyodide) return;
-        if (window.confirm("Redémarrer le noyau ?")) {
-            await pyodide.runPythonAsync(`for key in list(globals().keys()):\n    if key not in ['__name__', '__doc__', '__package__', '__loader__', '__spec__', '__annotations__', '__builtins__', 'js', 'pyodide', 'create_proxy']:\n        del globals()[key]`);
+        if (window.confirm("Voulez-vous redémarrer l'exécuteur Python ? Toutes les variables en mémoire seront effacées.")) {
+            await pyodide.runPythonAsync(`
+for key in list(globals().keys()):
+    if key not in ['__name__', '__doc__', '__package__', '__loader__', '__spec__', '__annotations__', '__builtins__', 'js', 'pyodide', 'create_proxy']:
+        del globals()[key]
+            `);
             for (let key in window.activeP5Instances) { window.activeP5Instances[key].remove(); }
             window.activeP5Instances = {};
-            alert("✅ Noyau redémarré.");
+            alert("✅ Noyau redémarré avec succès.");
         }
       };
 
       const handleRunAllCells = async () => {
+        if (!pyodide || isPyodideLoading) return;
         const activeCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
-        for (const cell of activeCells) { if (cell.type === 'code' && cellRunRefs.current[cell.id]) { await cellRunRefs.current[cell.id](); } }
+        for (const cell of activeCells) {
+          if (cell.type === 'code' && cellRunRefs.current[cell.id]) {
+            await cellRunRefs.current[cell.id](); 
+          }
+        }
       };
 
-      const registerCellRun = (id, runFn) => { if (runFn) cellRunRefs.current[id] = runFn; else delete cellRunRefs.current[id]; };
+      const registerCellRun = (id, runFn) => {
+        if (runFn) cellRunRefs.current[id] = runFn;
+        else delete cellRunRefs.current[id];
+      };
 
       const handleAddCell = () => {
-        if (!user || !currentNbId) return;
+        if (!user || !currentNbId || isReadOnlyMode) return;
         handleSnapshot();
         const newCellId = generateUUID();
         const nbCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId);
         const newOrder = nbCells.length > 0 ? Math.max(...nbCells.map(c => c.order)) + 10 : 10;
-        dispatchServerAction({ type: 'ADD_CELL', payload: { id: newCellId, notebookId: currentNbId, code: '', type: 'code', output: '', status: 'idle', order: newOrder, locked: false, executionCount: null } });
+        const newCell = { id: newCellId, notebookId: currentNbId, code: '', type: 'code', output: '', status: 'idle', order: newOrder, locked: false, executionCount: null };
+        
+        dispatchServerAction({ type: 'ADD_CELL', payload: newCell });
         setSelectedCellId(newCellId);
       };
 
       const handleMoveCell = (cellId, direction) => {
+        if (isReadOnlyMode) return;
         const nbCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
         const index = nbCells.findIndex(c => c.id === cellId);
-        let targetCell = direction === 'up' ? nbCells[index - 1] : nbCells[index + 1];
+        if (index === -1) return;
+        
+        let targetCell = null;
+        if (direction === 'up' && index > 0) targetCell = nbCells[index - 1];
+        else if (direction === 'down' && index < nbCells.length - 1) targetCell = nbCells[index + 1];
         if (!targetCell) return;
+
         handleSnapshot();
-        dispatchServerAction({ type: 'UPDATE_CELLS', payload: [{ cellId, data: { order: targetCell.order } }, { cellId: targetCell.id, data: { order: nbCells[index].order } }] });
+        dispatchServerAction({ type: 'UPDATE_CELLS', payload: [
+            { cellId, data: { order: targetCell.order } },
+            { cellId: targetCell.id, data: { order: nbCells[index].order } }
+        ]});
       };
 
-      const handleDeleteCell = (cellId) => { handleSnapshot(); dispatchServerAction({ type: 'DELETE_CELL', payload: { cellId } }); if (selectedCellId === cellId) setSelectedCellId(null); };
+      const handleDeleteCell = (cellId) => {
+        if (isReadOnlyMode) return;
+        handleSnapshot();
+        dispatchServerAction({ type: 'DELETE_CELL', payload: { cellId } });
+        if (selectedCellId === cellId) setSelectedCellId(null);
+      };
 
-      const handleUpdateCellProperty = (cellId, dataToUpdate) => { dispatchServerAction({ type: 'UPDATE_CELL', payload: { cellId, data: dataToUpdate } }); };
+      const handleUpdateCellProperty = (cellId, dataToUpdate) => {
+         if (isReadOnlyMode) return;
+         dispatchServerAction({ type: 'UPDATE_CELL', payload: { cellId, data: dataToUpdate } });
+      };
 
       const handleUpdateCellCode = (cellId, fullCode, changes) => {
+         if (isReadOnlyMode) return;
          setServerData(prev => applyActionToState(prev, { type: 'UPDATE_CELL', payload: { cellId, data: { code: fullCode } } }));
-         if (socketRef.current) socketRef.current.emit('cell_edit_operations', { cellId, code: fullCode, changes });
+         if (socketRef.current) {
+            socketRef.current.emit('cell_edit_operations', { cellId, code: fullCode, changes });
+         }
       };
 
+      // NOUVEAU: Génération propre d'un vrai fichier .ipynb formaté Jupyter
       const handleDownload = () => {
         const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId);
         const nbCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
-        const ipynb = { metadata: { language_info: { name: "python" } }, nbformat: 4, nbformat_minor: 4, cells: nbCells.map(c => ({ cell_type: (c.type === 'markdown' || c.type === 'heading') ? 'markdown' : 'code', metadata: {}, source: c.code.split('\n').map(l => l + '\n'), outputs: [], execution_count: c.executionCount })) };
+        
+        const ipynb = {
+          metadata: {
+            language_info: { name: "python", version: "3" },
+            collab_notebook: { title: activeNotebook?.title || "Notebook" }
+          },
+          nbformat: 4,
+          nbformat_minor: 4,
+          cells: nbCells.map((c) => {
+             const cellType = (c.type === 'markdown' || c.type === 'heading') ? 'markdown' : (c.type === 'raw' ? 'raw' : 'code');
+             const sourceLines = c.code ? c.code.split('\n').map((line, i, arr) => line + (i < arr.length - 1 ? '\n' : '')) : [];
+             
+             let cell = {
+               cell_type: cellType,
+               metadata: {},
+               source: sourceLines
+             };
+             
+             if (cellType === 'code') {
+               cell.execution_count = c.executionCount || null;
+               cell.outputs = c.output ? [
+                  {
+                     name: "stdout",
+                     output_type: "stream",
+                     text: c.output.split('\n').map((line, i, arr) => line + (i < arr.length - 1 ? '\n' : ''))
+                  }
+               ] : [];
+             }
+             return cell;
+          })
+        };
+        
         const blob = new Blob([JSON.stringify(ipynb, null, 2)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = `${activeNotebook?.title || 'notebook'}.ipynb`; a.click();
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${activeNotebook?.title || 'notebook_export'}.ipynb`;
+        a.click();
+        URL.revokeObjectURL(url);
       };
 
-      const handleCopyCell = () => { const selectedCell = (serverData.cells || []).find(c => c.id === selectedCellId); if (selectedCell) setClipboardCell({ ...selectedCell, id: undefined, notebookId: undefined }); };
-      const handleCutCell = () => { const selectedCell = (serverData.cells || []).find(c => c.id === selectedCellId); if (selectedCell) { handleCopyCell(); handleDeleteCell(selectedCell.id); } };
-      const handlePasteCell = () => { if (!clipboardCell || !currentNbId) return; handleSnapshot(); const newCellId = generateUUID(); dispatchServerAction({ type: 'ADD_CELL', payload: { ...clipboardCell, id: newCellId, notebookId: currentNbId, order: Date.now() } }); setSelectedCellId(newCellId); };
+      const handleCopyCell = () => {
+          const selectedCell = (serverData.cells || []).find(c => c.id === selectedCellId);
+          if (!selectedCell) return;
+          setClipboardCell({ ...selectedCell, id: undefined, notebookId: undefined, output: '', status: 'idle', executionCount: null });
+      };
 
-      const getNextExecutionCount = () => { const nbCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId); return Math.max(0, ...nbCells.map(c => c.executionCount || 0)) + 1; };
+      const handleCutCell = () => {
+          if (isReadOnlyMode) return;
+          const selectedCell = (serverData.cells || []).find(c => c.id === selectedCellId);
+          if (!selectedCell) return;
+          const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId);
+          const userData = (serverData.users || []).find(u => u.id === user.uid);
+          const hasAdminRights = userData?.role === 'admin' || userData?.role === 'prof';
+          if (selectedCell.locked && (!activeNotebook?.permissions || activeNotebook.permissions.canUnlock === false) && !hasAdminRights) return;
+          
+          setClipboardCell({ ...selectedCell, id: undefined, notebookId: undefined, output: '', status: 'idle', executionCount: null });
+          handleDeleteCell(selectedCell.id);
+      };
+
+      const handlePasteCell = () => {
+          if (!clipboardCell || !currentNbId || isReadOnlyMode) return;
+          handleSnapshot();
+          const newCellId = generateUUID();
+          const nbCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
+          let insertOrder = 10;
+          if (selectedCellId) {
+              const selIndex = nbCells.findIndex(c => c.id === selectedCellId);
+              if (selIndex !== -1) {
+                  if (selIndex === nbCells.length - 1) { insertOrder = nbCells[selIndex].order + 10; } 
+                  else { insertOrder = (nbCells[selIndex].order + nbCells[selIndex+1].order) / 2; }
+              }
+          } else if (nbCells.length > 0) {
+              insertOrder = nbCells[nbCells.length - 1].order + 10;
+          }
+          const newCell = { ...clipboardCell, id: newCellId, notebookId: currentNbId, order: insertOrder };
+          dispatchServerAction({ type: 'ADD_CELL', payload: newCell });
+          setSelectedCellId(newCellId);
+      };
+
+      const getNextExecutionCount = () => {
+          const nbCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId);
+          const maxCount = Math.max(0, ...nbCells.map(c => c.executionCount || 0));
+          return maxCount + 1;
+      };
 
       const userData = user ? (serverData.users || []).find(u => u.id === user.uid) : null;
       const myNotebooks = (serverData.notebooks || []).filter(n => n.ownerUid === user?.uid);
-      const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId);
       const sharedNotebooks = userData ? (serverData.notebooks || []).filter(n => n.sharedWith.some(s => (typeof s === 'string' ? s : s.username) === userData.username)) : [];
+      const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId);
       const activeCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
+
       const hasAdminRights = userData?.role === 'admin' || userData?.role === 'prof';
-      
-      const userPermissions = useMemo(() => {
-          if (!activeNotebook || !userData) return null;
-          if (activeNotebook.ownerUid === userData.id || hasAdminRights) return { canEdit: true, canDelete: true, canUnlock: true, canShare: true, canCreate: true };
-          const member = activeNotebook.sharedWith.find(s => (typeof s === 'string' ? s : s.username) === userData.username);
-          return typeof member === 'string' ? { canEdit: true, canDelete: true, canUnlock: true, canShare: true, canCreate: true } : (member?.permissions || {});
+      const isCopiedNotebook = !!activeNotebook?.templateSourceId;
+
+      // NOUVEAU: Détermine si l'utilisateur est en lecture seule sur ce notebook
+      const isReadOnlyMode = useMemo(() => {
+          if (!activeNotebook || !userData) return true;
+          if (activeNotebook.ownerUid === userData.id || hasAdminRights) return false;
+          const share = activeNotebook.sharedWith.find(s => (typeof s === 'string' ? s : s.username) === userData.username);
+          if (typeof share === 'string') return false; // Ancien format = éditeur par défaut
+          return share?.role === 'reader';
       }, [activeNotebook, userData, hasAdminRights]);
 
-      const connectedUsersList = useMemo(() => {
+      const canShareNotebook = hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canShare !== false;
+      const canGenCodeNotebook = hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canGenerateCode !== false;
+      const canCreateCellsNotebook = !isReadOnlyMode && (hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canCreate !== false);
+      const canUnlockCellsNotebook = !isReadOnlyMode && (hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canUnlock !== false);
+
+      // NOUVEAU: Liste des personnes en ligne (Style Google Docs)
+      const onlineUsers = useMemo(() => {
           if (!currentNbId) return [];
           const now = Date.now();
-          const inThisNb = Object.values(remoteCursorsState).filter(c => c.notebookId === currentNbId && (now - c.timestamp < 15000));
-          const unique = {}; inThisNb.forEach(c => { if (!unique[c.userId] || unique[c.userId].timestamp < c.timestamp) unique[c.userId] = c; });
-          return Object.values(unique).sort((a, b) => a.username.localeCompare(b.username));
-      }, [remoteCursorsState, currentNbId]);
-
-      const canShareNotebook = hasAdminRights || userPermissions?.canShare !== false;
-      const canGenCodeNotebook = hasAdminRights || (activeNotebook?.ownerUid === userData?.id);
-      const canCreateCellsNotebook = hasAdminRights || userPermissions?.canCreate !== false;
-      const canUnlockCellsNotebook = hasAdminRights || userPermissions?.canUnlock !== false;
+          return Object.values(remoteCursorsState).filter(c => c.userId !== user?.uid && c.timestamp > now - 10000);
+      }, [remoteCursorsState, currentNbId, user?.uid]);
 
       const selectedCell = activeCells.find(c => c.id === selectedCellId);
       const isSelectedCellFirst = activeCells[0]?.id === selectedCellId;
@@ -1322,107 +1460,233 @@ except Exception:
 
       const myFilteredNotebooks = myNotebooks.filter(nb => nb.title.toLowerCase().includes(searchQuery.toLowerCase()));
       const sharedFilteredNotebooks = sharedNotebooks.filter(nb => nb.title.toLowerCase().includes(searchQuery.toLowerCase()));
-      const availableShareUsers = (serverData.users || []).filter(u => u.id !== user?.uid && activeNotebook && !activeNotebook.sharedWith.some(s => (typeof s === 'string' ? s : s.username) === u.username) && u.username.toLowerCase().includes(shareUsername.toLowerCase()));
 
-      const Avatar = ({ name, size=14, role='eleve', borderColor=null }) => (
-        <div className={`shrink-0 rounded-full flex items-center justify-center border transition-all ${borderColor ? 'ring-2 ring-offset-1 dark:ring-offset-[#1e1e1e]' : ''} ${role === 'admin' ? 'bg-red-100 text-red-600 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800' : role === 'prof' ? 'bg-emerald-100 text-emerald-600 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800' : 'bg-primary-100 text-primary-600 border-primary-200 dark:bg-primary-900/30 dark:text-primary-400 dark:border-primary-800'}`} style={{width: size+10, height: size+10, borderColor: borderColor || 'transparent', ringColor: borderColor || 'transparent'}}>
+      const availableShareUsers = (serverData.users || []).filter(u => 
+          u.id !== user?.uid && 
+          activeNotebook && !activeNotebook.sharedWith.some(s => (typeof s === 'string' ? s : s.username) === u.username) &&
+          u.username.toLowerCase().includes(shareUsername.toLowerCase())
+      );
+
+      const Avatar = ({ name, size=14, role='eleve' }) => (
+        <div className={`shrink-0 rounded-full flex items-center justify-center border ${role === 'admin' ? 'bg-red-100 text-red-600 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-800' : role === 'prof' ? 'bg-emerald-100 text-emerald-600 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400 dark:border-emerald-800' : 'bg-primary-100 text-primary-600 border-primary-200 dark:bg-primary-900/30 dark:text-primary-400 dark:border-primary-800'}`} style={{width: size+10, height: size+10}}>
           {role === 'admin' ? <Shield size={size} /> : role === 'prof' ? <GraduationCap size={size} /> : <User size={size} />}
         </div>
       );
 
-      if (isAuthLoading) return <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-primary-500"><Loader2 className="w-10 h-10 animate-spin mb-4" /><p>Chargement...</p></div>;
+      if (isAuthLoading) return <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-primary-500"><Loader2 className="w-10 h-10 animate-spin mb-4" /><p>Chargement local...</p></div>;
 
       if (!userData) {
         return (
-          <div className="min-h-screen flex items-center justify-center p-4">
-            <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-8 rounded-2xl w-full max-w-md shadow-2xl">
+          <div className="min-h-screen flex items-center justify-center p-4 transition-colors">
+            <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-8 rounded-2xl w-full max-w-md shadow-2xl transition-colors">
               <div className="flex justify-center mb-6"><div className="w-16 h-16 bg-primary-100 dark:bg-primary-900/30 text-primary-600 dark:text-primary-400 rounded-full flex items-center justify-center"><User size={32} /></div></div>
-              <h2 className="text-2xl font-bold text-center mb-2">Collab Notebook</h2>
-              <p className="text-gray-500 text-center mb-8">{authMode === 'login' ? 'Connexion' : 'Inscription'}</p>
+              <h2 className="text-2xl font-bold text-center text-gray-900 dark:text-white mb-2">Collab Notebook</h2>
+              <p className="text-gray-500 dark:text-slate-400 text-center mb-8">{authMode === 'login' ? 'Connectez-vous à votre compte' : 'Créez un compte pour commencer à coder'}</p>
               <form onSubmit={handleAuth} className="space-y-4">
-                <input type="text" required placeholder="Pseudo" value={inputUsername} onChange={(e) => setInputUsername(e.target.value)} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-4 py-3 focus:border-primary-500 outline-none" />
-                <input type="password" required placeholder="Mot de passe" value={inputPassword} onChange={(e) => setInputPassword(e.target.value)} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-4 py-3 focus:border-primary-500 outline-none" />
-                {authMode === 'register' && <input type="password" required placeholder="Confirmer" value={inputPasswordConfirm} onChange={(e) => setInputPasswordConfirm(e.target.value)} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-4 py-3 focus:border-primary-500 outline-none" />}
-                <button type="submit" className="w-full bg-primary-600 hover:bg-primary-700 text-white font-medium py-3 rounded-lg mt-2">{authMode === 'login' ? 'Se connecter' : "S'inscrire"}</button>
+                <input type="text" required placeholder="Pseudo (ex: AlanTuring)" value={inputUsername} onChange={(e) => setInputUsername(e.target.value)} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-4 py-3 text-gray-900 dark:text-white focus:outline-none focus:border-primary-500 transition-colors" />
+                <input type="password" required placeholder="Mot de passe" value={inputPassword} onChange={(e) => setInputPassword(e.target.value)} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-4 py-3 text-gray-900 dark:text-white focus:outline-none focus:border-primary-500 transition-colors" />
+                {authMode === 'register' && (
+                  <input type="password" required placeholder="Confirmez le mot de passe" value={inputPasswordConfirm} onChange={(e) => setInputPasswordConfirm(e.target.value)} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-4 py-3 text-gray-900 dark:text-white focus:outline-none focus:border-primary-500 transition-colors" />
+                )}
+                <button type="submit" className="w-full bg-primary-600 hover:bg-primary-700 text-white font-medium py-3 rounded-lg transition-colors mt-2">
+                  {authMode === 'login' ? 'Se connecter' : "S'inscrire"}
+                </button>
               </form>
               <div className="mt-6 text-center">
-                <button onClick={() => setAuthMode(authMode === 'login' ? 'register' : 'login')} className="text-sm text-primary-500 hover:underline">{authMode === 'login' ? "S'inscrire" : 'Se connecter'}</button>
+                <button onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setInputPasswordConfirm(''); }} className="text-sm text-primary-500 hover:text-primary-600 dark:hover:text-primary-400 transition-colors">
+                  {authMode === 'login' ? "Pas de compte ? S'inscrire" : 'Déjà un compte ? Se connecter'}
+                </button>
               </div>
             </div>
           </div>
         );
       }
 
+      if (currentNbId && !activeNotebook) {
+          return (
+              <div className="min-h-screen bg-gray-50 dark:bg-[#1e1e1e] flex flex-col items-center justify-center text-primary-500">
+                  <Loader2 className="w-10 h-10 animate-spin mb-4" />
+                  <p>Ouverture du notebook...</p>
+              </div>
+          );
+      }
+
       if (!currentNbId) {
         return (
-          <div className="min-h-screen p-4 md:p-8">
+          <div className="min-h-screen p-4 md:p-8 transition-colors relative">
             <div className="max-w-5xl mx-auto">
-              <header className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 border-b border-gray-200 dark:border-slate-800 pb-6 gap-4">
+              
+              <header className="flex flex-col md:flex-row items-start md:items-center justify-between mb-8 border-b border-gray-200 dark:border-slate-800 pb-6 gap-4 relative z-50">
                 <div className="flex items-center gap-3">
                   <BookOpen size={28} className="text-primary-500" />
-                  <h1 className="text-2xl md:text-3xl font-bold">Mes Notebooks</h1>
+                  <h1 className="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white">Mes Notebooks</h1>
                 </div>
-                <div className="flex flex-wrap items-center gap-3">
-                  <button onClick={() => { setProfileForm({ username: userData.username, email: userData.email || '', description: userData.description || '', oldPassword: '', newPassword: '' }); setIsProfileOpen(true); }} className="flex items-center gap-2 bg-white dark:bg-slate-900 px-4 py-2 rounded-full border border-gray-200 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors">
+                
+                <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
+                  <button onClick={() => { setProfileForm({ username: userData.username, email: userData.email || '', description: userData.description || '', oldPassword: '', newPassword: '' }); setIsProfileOpen(true); }} className="flex items-center gap-2 bg-white dark:bg-slate-900 px-4 py-2 rounded-full border border-gray-200 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800 transition-colors shadow-sm cursor-pointer" title="Éditer le profil">
                     <Avatar name={userData.username} role={userData.role} size={16} /> 
-                    <strong className="max-w-[100px] truncate">{userData.username}</strong>
+                    <strong className="text-gray-900 dark:text-white max-w-[100px] truncate">{userData.username}</strong>
+                    {userData.role === 'admin' && <span className="text-[10px] bg-red-100 text-red-600 px-1.5 rounded ml-1 font-bold">ADMIN</span>}
+                    {userData.role === 'prof' && <span className="text-[10px] bg-emerald-100 text-emerald-600 px-1.5 rounded ml-1 font-bold">PROF</span>}
                   </button>
+                  
                   <form onSubmit={handleJoinByCode} className="flex gap-2">
-                    <input type="text" placeholder="Code..." value={joinCode} onChange={(e) => setJoinCode(e.target.value)} className="w-28 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm outline-none" />
-                    <button type="submit" className="bg-emerald-600 text-white px-3 py-2 rounded-lg text-sm font-medium">Rejoindre</button>
+                    <input type="text" placeholder="Code d'accès..." value={joinCode} onChange={(e) => setJoinCode(e.target.value)} className="w-28 md:w-36 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors text-gray-900 dark:text-white" />
+                    <button type="submit" className="bg-gray-100 dark:bg-slate-800 hover:bg-emerald-50 dark:hover:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 border border-gray-200 dark:border-slate-700 hover:border-emerald-500 px-3 py-2 rounded-lg text-sm font-medium transition-colors hidden sm:block">Rejoindre</button>
+                    <button type="submit" className="bg-gray-100 dark:bg-slate-800 hover:bg-emerald-50 text-emerald-600 border border-gray-200 dark:border-slate-700 px-3 rounded-lg sm:hidden"><Play size={14}/></button>
                   </form>
-                  <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 bg-white dark:bg-slate-800 px-4 py-2 rounded-lg border border-gray-200 dark:border-slate-700"><Upload size={18} /> Import</button>
-                  <button onClick={handleCreateNotebook} className="flex items-center gap-2 bg-primary-600 text-white px-4 py-2 rounded-lg shadow-md"><Plus size={18} /> Nouveau</button>
-                  <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500"><LogOut size={20}/></button>
+
                   <input type="file" accept=".ipynb" className="hidden" ref={fileInputRef} onChange={handleImportNotebook} />
+                  <button onClick={() => fileInputRef.current?.click()} className="flex items-center justify-center gap-2 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 text-gray-700 dark:text-white px-3 md:px-4 py-2.5 rounded-lg font-medium transition-colors border border-gray-200 dark:border-slate-700 shadow-sm flex-1 md:flex-none"><Upload size={18} /> <span className="hidden md:inline">Importer</span></button>
+                  <button onClick={handleCreateNotebook} className="flex items-center justify-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-3 md:px-5 py-2.5 rounded-lg font-medium transition-colors shadow-md flex-1 md:flex-none"><Plus size={18} /> <span className="hidden md:inline">Nouveau</span></button>
+                  
+                  <div className="relative">
+                     <button onClick={() => setIsSettingsOpen(!isSettingsOpen)} className="p-2 text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors"><Settings size={20}/></button>
+                     {isSettingsOpen && (
+                        <div className="absolute right-0 top-full mt-2 w-64 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-2xl p-4 z-[99999]">
+                          {hasAdminRights && (
+                             <div className="mb-4 border-b border-gray-100 dark:border-slate-700 pb-4">
+                                <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block font-semibold uppercase tracking-wider text-[10px]">Outils Privilégiés</span>
+                                {userData?.role === 'admin' && (
+                                    <a href="paneladmin.html" className="w-full text-left px-3 py-2 text-sm bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors mb-2 flex items-center gap-2"><Shield size={14}/> Panel Admin</a>
+                                )}
+                                {(userData?.role === 'prof' || userData?.role === 'admin') && (
+                                   <a href="panelprof.html" className="w-full text-left px-3 py-2 text-sm bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 rounded-lg hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors flex items-center gap-2"><GraduationCap size={14}/> Panel Prof</a>
+                                )}
+                             </div>
+                          )}
+
+                          <h4 className="font-semibold text-gray-900 dark:text-white mb-4 border-b border-gray-100 dark:border-slate-700 pb-2">Apparence</h4>
+                          <div className="flex items-center justify-between mb-4">
+                            <span className="text-sm text-gray-600 dark:text-slate-300">Mode Sombre</span>
+                            <button onClick={() => setIsDark(!isDark)} className={`w-12 h-6 rounded-full flex items-center transition-colors p-1 ${isDark ? 'bg-primary-600 justify-end' : 'bg-gray-300 justify-start'}`}>
+                              <div className="w-4 h-4 rounded-full bg-white flex items-center justify-center">
+                                 {isDark ? <Moon size={10} className="text-primary-600"/> : <Sun size={10} className="text-amber-500"/>}
+                              </div>
+                            </button>
+                          </div>
+                          <div className="mb-2">
+                            <span className="text-sm text-gray-600 dark:text-slate-300 mb-2 block">Couleur Principale</span>
+                            <div className="flex gap-2">
+                               {['indigo', 'emerald', 'rose', 'amber', 'purple'].map(color => (
+                                 <button key={color} onClick={() => setThemeColor(color)} className={`w-6 h-6 rounded-full border-2 ${themeColor === color ? 'border-gray-900 dark:border-white scale-110' : 'border-transparent hover:scale-110'} transition-transform`} style={{ backgroundColor: getThemeHex(color) }} title={color} />
+                               ))}
+                            </div>
+                          </div>
+                        </div>
+                     )}
+                  </div>
+                  <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Se déconnecter"><LogOut size={20}/></button>
                 </div>
               </header>
-              <div className="relative mb-8">
-                 <input type="text" placeholder="Rechercher..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-slate-700 rounded-xl px-4 py-3 pl-10 outline-none focus:border-primary-500" />
-                 <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"><Search size={18} /></div>
+
+              <div className="w-full relative mb-8">
+                 <input 
+                     type="text" 
+                     placeholder="Rechercher un notebook par nom..." 
+                     value={searchQuery} 
+                     onChange={(e) => setSearchQuery(e.target.value)} 
+                     className="w-full bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-primary-500 transition-colors shadow-sm text-gray-900 dark:text-white pl-10"
+                 />
+                 <div className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400">
+                    <Search size={18} />
+                 </div>
               </div>
+
               <div className="space-y-10">
                 <section>
-                  <h2 className="text-xl font-semibold mb-4 flex items-center gap-2"><Lock size={18} /> Mes créations</h2>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {myFilteredNotebooks.map(nb => (
-                      <div key={nb.id} onClick={() => setCurrentNbId(nb.id)} className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-5 rounded-xl hover:border-primary-500 cursor-pointer shadow-sm relative group">
-                        <button onClick={(e) => handleDeleteNotebook(e, nb.id)} className="absolute top-4 right-4 p-1.5 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16} /></button>
-                        <h3 className="text-lg font-medium truncate mb-2">{nb.title}</h3>
-                        <p className="text-sm text-gray-500">{nb.sharedWith.length} collaborateurs</p>
-                      </div>
-                    ))}
-                  </div>
+                  <h2 className="text-xl font-semibold mb-4 flex items-center gap-2"><Lock size={18} /> Créés par moi</h2>
+                  {myFilteredNotebooks.length === 0 ? <p className="text-gray-500 italic bg-white dark:bg-slate-900/50 p-6 rounded-xl border border-gray-200 dark:border-slate-800 border-dashed">Aucun notebook trouvé.</p> : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {myFilteredNotebooks.map(nb => (
+                        <div key={nb.id} onClick={() => { setCurrentNbId(nb.id); setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null); }} className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 shadow-sm group relative overflow-hidden">
+                          <button onClick={(e) => handleDeleteNotebook(e, nb.id)} className="absolute top-4 right-4 p-1.5 text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-slate-800 rounded transition-all opacity-0 group-hover:opacity-100 z-20" title="Supprimer ce notebook"><Trash2 size={16} /></button>
+                          
+                          <div className="flex items-center gap-3 mb-2 pr-8 relative z-10">
+                             <img src="logo_nb.png" alt="Logo" className="w-6 h-6 object-contain shrink-0" onError={(e)=>e.target.style.display='none'} />
+                             <h3 className="text-lg font-medium truncate">{nb.title}</h3>
+                          </div>
+                          
+                          <p className="text-sm text-gray-500 dark:text-slate-500 truncate relative z-10 mt-2">Partagé avec: {nb.sharedWith.length === 0 ? 'Personne' : nb.sharedWith.length + ' personne(s)'}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </section>
                 <section>
                   <h2 className="text-xl font-semibold mb-4 flex items-center gap-2"><Users size={18} /> Partagés avec moi</h2>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {sharedFilteredNotebooks.map(nb => (
-                      <div key={nb.id} onClick={() => setCurrentNbId(nb.id)} className="bg-white dark:bg-slate-900 border border-primary-100 dark:border-primary-900/50 p-5 rounded-xl hover:border-primary-500 cursor-pointer shadow-sm border-l-4 border-l-primary-500">
-                        <h3 className="text-lg font-medium truncate mb-4">{nb.title}</h3>
-                        <div className="flex items-center gap-2 text-sm text-primary-600">
-                           <Avatar name={nb.ownerUsername} size={14} /> <span>{nb.ownerUsername}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  {sharedFilteredNotebooks.length === 0 ? <p className="text-gray-500 italic bg-white dark:bg-slate-900/50 p-6 rounded-xl border border-gray-200 dark:border-slate-800 border-dashed">Personne n'a encore partagé de notebook avec vous.</p> : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {sharedFilteredNotebooks.map(nb => {
+                         const owner = serverData.users.find(u => u.id === nb.ownerUid);
+                         return (
+                          <div key={nb.id} onClick={() => { setCurrentNbId(nb.id); setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null); }} className="bg-white dark:bg-slate-900 border border-primary-100 dark:border-primary-900/50 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 relative overflow-hidden shadow-sm flex flex-col justify-between">
+                            <div className="absolute top-0 left-0 w-1 h-full bg-primary-500 z-20"></div>
+                            
+                            <div className="flex items-center gap-3 mb-4 pr-8 relative z-10">
+                               <img src="logo_nb.png" alt="Logo" className="w-6 h-6 object-contain shrink-0" onError={(e)=>e.target.style.display='none'} />
+                               <h3 className="text-lg font-medium truncate">{nb.title}</h3>
+                            </div>
+                            
+                            <div className="flex items-center gap-2 relative z-10">
+                               <Avatar name={nb.ownerUsername} size={18} role={owner?.role} />
+                               <span onClick={(e) => { e.stopPropagation(); setViewingUser(owner); }} className="text-sm text-primary-600 dark:text-primary-400 truncate cursor-pointer hover:underline">{nb.ownerUsername}</span>
+                            </div>
+                          </div>
+                         )
+                      })}
+                    </div>
+                  )}
                 </section>
               </div>
             </div>
             {isProfileOpen && (
-              <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[9999] p-4">
-                <div className="bg-white dark:bg-slate-900 p-6 rounded-xl w-full max-w-md shadow-2xl relative">
-                  <button onClick={() => setIsProfileOpen(false)} className="absolute top-4 right-4"><X size={20}/></button>
-                  <h2 className="text-xl font-bold mb-6">Profil</h2>
+              <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[99999] p-4">
+                <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-md shadow-2xl relative">
+                  <button onClick={() => setIsProfileOpen(false)} className="absolute top-4 right-4 text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
+                  <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-6">Mon Profil</h2>
                   <form onSubmit={handleSaveProfile} className="space-y-4">
-                    <input type="text" value={profileForm.username} onChange={e => setProfileForm({...profileForm, username: e.target.value})} className="w-full border p-2 rounded dark:bg-slate-950 dark:border-slate-700" placeholder="Pseudo" required />
-                    <textarea value={profileForm.description} onChange={e => setProfileForm({...profileForm, description: e.target.value})} className="w-full border p-2 rounded dark:bg-slate-950 dark:border-slate-700 h-20" placeholder="Bio..."></textarea>
-                    <div className="border-t pt-4 space-y-4">
-                      <input type="password" value={profileForm.oldPassword} onChange={e => setProfileForm({...profileForm, oldPassword: e.target.value})} className="w-full border p-2 rounded dark:bg-slate-950 dark:border-slate-700" placeholder="Ancien mot de passe" />
-                      <input type="password" value={profileForm.newPassword} onChange={e => setProfileForm({...profileForm, newPassword: e.target.value})} className="w-full border p-2 rounded dark:bg-slate-950 dark:border-slate-700" placeholder="Nouveau mot de passe" />
+                    <div>
+                      <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Pseudo</label>
+                      <input type="text" value={profileForm.username} onChange={e => setProfileForm({...profileForm, username: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 outline-none" required />
                     </div>
-                    <button type="submit" className="w-full bg-primary-600 text-white py-2 rounded-lg mt-2">Enregistrer</button>
+                    <div>
+                      <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Email (optionnel)</label>
+                      <input type="email" placeholder="email@exemple.com" value={profileForm.email} onChange={e => setProfileForm({...profileForm, email: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 outline-none" />
+                    </div>
+                    <div>
+                      <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Description (optionnel)</label>
+                      <textarea placeholder="Écrivez votre bio ici" value={profileForm.description} onChange={e => setProfileForm({...profileForm, description: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 outline-none h-20 resize-none"></textarea>
+                    </div>
+                    <div className="pt-4 border-t border-gray-200 dark:border-slate-700 mt-4">
+                      <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Ancien mot de passe</label>
+                      <input type="password" placeholder="Requis pour changer de mot de passe" value={profileForm.oldPassword} onChange={e => setProfileForm({...profileForm, oldPassword: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 mb-3 text-gray-900 dark:text-white focus:border-primary-500 outline-none" />
+                      <label className="block text-xs text-gray-500 dark:text-slate-400 mb-1">Nouveau mot de passe</label>
+                      <input type="password" placeholder="Laisser vide pour ne pas changer" value={profileForm.newPassword} onChange={e => setProfileForm({...profileForm, newPassword: e.target.value})} className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2 text-gray-900 dark:text-white focus:border-primary-500 outline-none" />
+                    </div>
+                    <button type="submit" className="w-full bg-primary-600 hover:bg-primary-700 text-white font-medium py-2.5 rounded-lg transition-colors mt-2">Enregistrer</button>
                   </form>
+                </div>
+              </div>
+            )}
+            {viewingUser && (
+              <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[99999] p-4">
+                <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-sm shadow-2xl relative text-center">
+                  <button onClick={() => setViewingUser(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
+                  <div className="flex justify-center mb-4">
+                     <Avatar name={viewingUser.username} role={viewingUser.role} size={48} />
+                  </div>
+                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-1">{viewingUser.username}</h2>
+                  <div className="mb-4">
+                     <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider ${viewingUser.role === 'admin' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' : viewingUser.role === 'prof' ? 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-primary-100 text-primary-600 dark:bg-primary-900/30 dark:text-primary-400'}`}>
+                       {viewingUser.role || 'eleve'}
+                     </span>
+                  </div>
+                  {viewingUser.description ? (
+                     <p className="text-gray-600 dark:text-slate-300 text-sm whitespace-pre-wrap bg-gray-50 dark:bg-slate-800 p-3 rounded-lg text-left">{viewingUser.description}</p>
+                  ) : (
+                     <p className="text-gray-400 dark:text-slate-500 text-sm italic">Aucune description.</p>
+                  )}
                 </div>
               </div>
             )}
@@ -1431,220 +1695,329 @@ except Exception:
       }
 
       return (
-        <div className="min-h-screen flex flex-col">
+        <div className="min-h-screen transition-colors flex flex-col">
+          
           <div className="sticky top-0 z-[1000] flex flex-col shadow-md">
-            <nav className="bg-white dark:bg-[#161b22] border-b border-gray-200 dark:border-slate-700 px-2 sm:px-4 py-2 flex items-center justify-between gap-4">
+            <nav className="bg-white dark:bg-[#161b22] border-b border-gray-200 dark:border-slate-700/50 px-2 sm:px-4 py-2 flex flex-wrap gap-2 items-center justify-between">
               <div className="flex items-center gap-2 sm:gap-4 min-w-0">
-                <button onClick={() => setCurrentNbId(null)} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors"><ArrowLeft size={20} /></button>
+                <button onClick={() => {setCurrentNbId(null); setSelectedCellId(null);}} className="p-1 sm:p-2 flex-shrink-0 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg transition-colors"><ArrowLeft size={20} /></button>
+                
                 <div className="flex items-center min-w-0">
                   {isEditingTitle ? (
-                    <input autoFocus type="text" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleRenameNotebook(editTitle)} onBlur={() => handleRenameNotebook(editTitle)} className="bg-gray-50 dark:bg-slate-900 border border-primary-500 font-bold px-2 py-1 rounded outline-none" />
+                    <input autoFocus type="text" value={editTitle} onChange={(e) => setEditTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleRenameNotebook(editTitle); }} onBlur={() => handleRenameNotebook(editTitle)} className="bg-gray-50 dark:bg-slate-900 border border-primary-500 text-gray-900 dark:text-slate-100 font-bold px-2 py-1 rounded outline-none w-32 sm:w-auto" />
                   ) : (
-                    <div className="flex items-center gap-2 cursor-pointer truncate" onClick={() => (activeNotebook?.ownerUid === user?.uid || hasAdminRights) && (setEditTitle(activeNotebook.title), setIsEditingTitle(true))}>
-                      <h1 className="text-base font-bold truncate max-w-[200px]">{activeNotebook?.title}</h1>
-                      {(activeNotebook?.ownerUid === user?.uid || hasAdminRights) && <Edit2 size={12} className="opacity-50" />}
+                    <div className={`flex items-center gap-2 group min-w-0 ${activeNotebook?.ownerUid === user?.uid || hasAdminRights ? 'cursor-pointer' : ''}`} onClick={() => { if (activeNotebook?.ownerUid === user?.uid || hasAdminRights) { setEditTitle(activeNotebook.title); setIsEditingTitle(true); } }}>
+                      <div className="flex flex-col">
+                         <h1 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 truncate max-w-[150px] sm:max-w-[300px]">{activeNotebook?.title || "Chargement..."}</h1>
+                         {isReadOnlyMode && <span className="text-[10px] font-black text-amber-500 uppercase tracking-widest flex items-center gap-1"><Eye size={10}/> Lecture seule</span>}
+                      </div>
+                      {(activeNotebook?.ownerUid === user?.uid || hasAdminRights) && <Edit2 size={14} className="text-gray-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />}
                     </div>
                   )}
                 </div>
-                <div className="hidden sm:flex items-center border-l pl-2 gap-1">
-                  <button id="btn-undo" onClick={handleUndo} disabled={historyPast.length === 0} className="p-1.5 opacity-50 disabled:opacity-20"><RotateCcw size={16} /></button>
-                  <button id="btn-redo" onClick={handleRedo} disabled={historyFuture.length === 0} className="p-1.5 opacity-50 disabled:opacity-20"><RotateCw size={16} /></button>
-                </div>
-              </div>
-
-              {/* Connected Users Widget with Names */}
-              <div className="flex-1 flex items-center gap-2 overflow-x-auto no-scrollbar">
-                <div className="flex items-center gap-2 bg-gray-100 dark:bg-slate-800 px-3 py-1.5 rounded-full border border-gray-200 dark:border-slate-700">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                    </span>
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500 dark:text-slate-400 whitespace-nowrap">Direct :</span>
-                    <div className="flex items-center gap-1.5 ml-1">
-                        {connectedUsersList.length > 0 ? connectedUsersList.map(u => (
-                            <div 
-                                key={u.userId} 
-                                onClick={() => { const obj = serverData.users.find(x => x.id === u.userId); if(obj) setViewingUser(obj); }}
-                                className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 cursor-pointer hover:border-primary-500 transition-colors"
-                            >
-                                <div className="w-2 h-2 rounded-full" style={{ backgroundColor: u.color }}></div>
-                                <span className="text-xs font-semibold truncate max-w-[80px]" style={{ color: u.color }}>{u.username}</span>
-                                {u.userId === user?.uid && <span className="text-[10px] opacity-50">(moi)</span>}
-                            </div>
-                        )) : <span className="text-xs italic text-gray-400">Seul ici</span>}
-                    </div>
+                
+                <div className="flex items-center border-l border-gray-200 dark:border-slate-700 ml-2 pl-2">
+                  <button id="btn-undo" onClick={handleUndo} disabled={historyPast.length === 0 || isReadOnlyMode} className="p-1 sm:p-1.5 text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent rounded transition-colors" title="Annuler l'action globale (Ctrl+Z)"><RotateCcw size={16} /></button>
+                  <button id="btn-redo" onClick={handleRedo} disabled={historyFuture.length === 0 || isReadOnlyMode} className="p-1 sm:p-1.5 text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent rounded transition-colors" title="Rétablir l'action globale (Ctrl+Y)"><RotateCw size={16} /></button>
                 </div>
               </div>
               
-              <div className="flex items-center gap-2 sm:gap-4 shrink-0">
-                <button onClick={handleRunAllCells} className="flex items-center gap-2 text-xs font-bold text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950 px-3 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800"><Play size={14} /> <span className="hidden lg:inline">Tout exécuter</span></button>
-                <div className="hidden sm:flex items-center gap-2 bg-gray-100 dark:bg-slate-800/50 px-3 py-1.5 rounded-full border border-gray-200 dark:border-slate-700 text-xs">
-                  {isPyodideLoading ? <><Loader2 size={12} className="animate-spin text-amber-500" /> Kernel...</> : <><CheckCircle2 size={12} className="text-emerald-500" /> Prêt</>}
+              <div className="flex items-center gap-2 sm:gap-4 overflow-x-auto no-scrollbar pb-1 sm:pb-0 w-full sm:w-auto">
+                {/* NOUVEAU: Liste des personnes en ligne (Style Google Docs) */}
+                <div className="flex items-center -space-x-2 mr-2">
+                    {onlineUsers.map(u => (
+                        <div 
+                          key={u.userId} 
+                          className="w-8 h-8 rounded-full border-2 border-white dark:border-[#161b22] flex items-center justify-center text-white text-[10px] font-black shadow-sm transition-transform hover:scale-110 cursor-help" 
+                          style={{ backgroundColor: u.color }}
+                          title={`${u.username} est en ligne`}
+                        >
+                            {u.username[0].toUpperCase()}
+                        </div>
+                    ))}
                 </div>
-                <div className="flex gap-1">
-                   <button onClick={handleDownload} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-lg" title="Exporter"><Download size={18} /></button>
-                   {canGenCodeNotebook && <button onClick={openCodeModal} className="p-2 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950 rounded-lg" title="Gérer le code"><Key size={18} /></button>}
-                   {canShareNotebook && <button onClick={() => setIsSharing(true)} className="p-2 text-primary-600 hover:bg-primary-50 dark:hover:bg-primary-950 rounded-lg" title="Partager"><Share2 size={18} /></button>}
+
+                <div className="flex flex-shrink-0 items-center gap-1 border-r border-gray-200 dark:border-slate-700 pr-2 sm:pr-4 mr-1 sm:mr-2">
+                   <button onClick={handleRestartKernel} className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-slate-300 hover:text-red-500 transition-colors px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800" title="Redémarrer le noyau">
+                      <Terminal size={14} /> <span className="hidden lg:inline">Noyau</span>
+                   </button>
+                   <button onClick={handleRunAllCells} className="flex items-center gap-1.5 text-xs text-gray-600 dark:text-slate-300 hover:text-primary-500 transition-colors px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-slate-800" title="Exécuter toutes les cellules de code">
+                      <Play size={14} /> <span className="hidden lg:inline">Tout exécuter</span>
+                   </button>
+                </div>
+
+                <div className="flex flex-shrink-0 items-center gap-2 bg-gray-100 dark:bg-slate-800/50 px-2 sm:px-3 py-1.5 rounded-full border border-gray-200 dark:border-slate-700/50 text-sm">
+                  {isPyodideLoading ? <><Loader2 size={14} className="animate-spin text-amber-500" /><span className="text-amber-600 dark:text-amber-400/90 hidden sm:inline">Chargement...</span></> : pyodide ? <><CheckCircle2 size={14} className="text-emerald-500" /><span className="text-emerald-600 dark:text-emerald-400/90 hidden sm:inline">Python Prêt</span></> : <><span className="text-red-500 hidden sm:inline">Erreur Python</span></>}
+                </div>
+
+                <div className="flex flex-shrink-0 gap-1 sm:gap-2 relative items-center">
+                  {(activeNotebook?.ownerUid === user?.uid || hasAdminRights) && (
+                     <>
+                       <input type="file" accept=".ipynb" className="hidden" ref={fileInputCurrentRef} onChange={handleImportIntoCurrentNotebook} />
+                       <button onClick={() => fileInputCurrentRef.current?.click()} className="flex items-center gap-2 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-600 px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors text-gray-700 dark:text-white" title="Remplacer le contenu par un fichier Jupyter"><Upload size={16} /></button>
+                     </>
+                  )}
+
+                  <button onClick={handleDownload} className="flex items-center gap-2 bg-white dark:bg-slate-800 hover:bg-gray-50 dark:hover:bg-slate-700 border border-gray-200 dark:border-slate-600 text-gray-700 dark:text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors" title="Exporter en .ipynb"><Download size={16} /> <span className="hidden md:inline">Exporter</span></button>
+                  
+                  {canGenCodeNotebook && (
+                    <button onClick={openCodeModal} className="flex items-center gap-2 bg-emerald-700 hover:bg-emerald-600 border border-emerald-600 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors shadow-sm" title="Créer un code et configurer le notebook"><Key size={16} /> <span className="hidden md:inline">Générer code</span></button>
+                  )}
+                  
+                  {canShareNotebook && (
+                    <button onClick={() => setIsSharing(true)} className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-2 sm:px-3 py-1.5 rounded-lg text-sm transition-colors shadow-sm" title="Partager pour collaborer en direct"><Share2 size={16} /> <span className="hidden md:inline">Partager</span></button>
+                  )}
+
+                  <div className="flex items-center border-l border-gray-200 dark:border-slate-700 pl-2 ml-2">
+                     <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Se déconnecter"><LogOut size={20}/></button>
+                  </div>
                 </div>
               </div>
             </nav>
 
-            <div className="bg-gray-50 dark:bg-[#1e1e1e] border-b border-gray-200 dark:border-slate-800 px-4 py-1.5 flex items-center justify-between gap-4">
-                {selectedCell ? (
-                    <div className="flex items-center gap-4 w-full">
-                        <div className="flex items-center gap-2 shrink-0">
-                            <select value={selectedCell.type || 'code'} onChange={(e) => handleUpdateCellProperty(selectedCell.id, { type: e.target.value })} className="bg-white dark:bg-[#2d2d2d] border border-gray-300 dark:border-slate-700 text-xs rounded px-2 py-1 outline-none">
-                                <option value="code">Code Python</option>
-                                <option value="markdown">Markdown</option>
-                                <option value="heading">Titre</option>
-                            </select>
-                            <div className="flex border rounded overflow-hidden">
-                                <button onClick={() => handleMoveCell(selectedCell.id, 'up')} className="p-1 hover:bg-gray-200 dark:hover:bg-[#333]"><ArrowUp size={14}/></button>
-                                <button onClick={() => handleMoveCell(selectedCell.id, 'down')} className="p-1 border-l hover:bg-gray-200 dark:hover:bg-[#333]"><ArrowDown size={14}/></button>
-                            </div>
-                        </div>
-                        <div className="flex items-center gap-1">
-                            <button onClick={handleCopyCell} className="p-1.5 hover:bg-gray-200 dark:hover:bg-[#333] rounded"><CopyIcon size={14}/></button>
-                            <button onClick={handlePasteCell} className="p-1.5 hover:bg-gray-200 dark:hover:bg-[#333] rounded"><ClipboardPaste size={14}/></button>
-                        </div>
-                        <div className="ml-auto flex items-center gap-2">
-                           {(canUnlockCellsNotebook) && (activeNotebook?.ownerUid === user?.uid || hasAdminRights) && (
-                                <button onClick={() => handleUpdateCellProperty(selectedCell.id, { locked: !selectedCell.locked })} className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-bold ${selectedCell.locked ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30' : 'bg-gray-100 text-gray-500'}`}>
-                                    {selectedCell.locked ? <Lock size={12}/> : <Unlock size={12}/>} {selectedCell.locked ? 'VERROUILLÉ' : 'LIBRE'}
-                                </button>
-                           )}
-                           <button onClick={() => handleDeleteCell(selectedCell.id)} className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-950 rounded"><Trash2 size={14}/></button>
-                        </div>
+            {selectedCell ? (
+               <div className="bg-gray-100 dark:bg-[#1e1e1e] border-b border-gray-200 dark:border-slate-800 px-2 sm:px-4 py-2 flex items-center gap-2 overflow-x-auto no-scrollbar shadow-inner">
+                 <span className="text-[10px] font-bold text-primary-500 whitespace-nowrap hidden sm:block tracking-widest uppercase">Édition</span>
+                 <div className="w-px h-4 bg-gray-300 dark:bg-slate-700 hidden sm:block mx-2"></div>
+                 
+                 <select
+                    value={selectedCell.type || 'code'}
+                    disabled={(selectedCell.locked && !hasAdminRights) || isReadOnlyMode}
+                    onChange={(e) => handleUpdateCellProperty(selectedCell.id, { type: e.target.value })}
+                    className="flex-shrink-0 bg-white dark:bg-[#2d2d2d] border border-gray-300 dark:border-slate-700 text-xs sm:text-sm text-gray-700 dark:text-slate-200 rounded px-2 py-1 outline-none focus:border-primary-500 disabled:opacity-50 cursor-pointer"
+                 >
+                    <option value="code">Code Python</option>
+                    <option value="markdown">Markdown</option>
+                    <option value="raw">Texte brut</option>
+                    <option value="heading">Titre</option>
+                 </select>
+
+                 {(selectedCell.type === 'markdown' || selectedCell.type === 'heading') && (
+                    <div className="flex flex-shrink-0 items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 ml-2">
+                       <button onClick={() => handleUpdateCellProperty(selectedCell.id, { align: 'left' })} disabled={isReadOnlyMode} className={`p-1 sm:p-1.5 ${selectedCell.align === 'left' || !selectedCell.align ? 'text-primary-500 bg-gray-100 dark:bg-[#3c3c3c]' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'} rounded-l transition-colors disabled:opacity-30`} title="Aligner à gauche"><AlignLeft size={14} /></button>
+                       <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
+                       <button onClick={() => handleUpdateCellProperty(selectedCell.id, { align: 'center' })} disabled={isReadOnlyMode} className={`p-1 sm:p-1.5 ${selectedCell.align === 'center' ? 'text-primary-500 bg-gray-100 dark:bg-[#3c3c3c]' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'} transition-colors disabled:opacity-30`} title="Centrer"><AlignCenter size={14} /></button>
+                       <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
+                       <button onClick={() => handleUpdateCellProperty(selectedCell.id, { align: 'right' })} disabled={isReadOnlyMode} className={`p-1 sm:p-1.5 ${selectedCell.align === 'right' ? 'text-primary-500 bg-gray-100 dark:bg-[#3c3c3c]' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white'} rounded-r transition-colors disabled:opacity-30`} title="Aligner à droite"><AlignRight size={14} /></button>
                     </div>
-                ) : <span className="text-xs text-gray-400 mx-auto italic">Sélectionnez une cellule pour la configurer</span>}
-            </div>
+                 )}
+
+                 <div className="flex flex-shrink-0 items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 ml-2">
+                   <button onClick={() => handleMoveCell(selectedCell.id, 'up')} disabled={(isSelectedCellFirst || selectedCell.locked || isReadOnlyMode) && !hasAdminRights} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-l hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Monter"><ArrowUp size={14} /></button>
+                   <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
+                   <button onClick={() => handleMoveCell(selectedCell.id, 'down')} disabled={(isSelectedCellLast || selectedCell.locked || isReadOnlyMode) && !hasAdminRights} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Descendre"><ArrowDown size={14} /></button>
+                 </div>
+
+                 <div className="flex flex-shrink-0 items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 ml-2">
+                   <button onClick={handleCopyCell} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white rounded-l hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Copier la cellule"><CopyIcon size={14} /></button>
+                   <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
+                   <button onClick={handleCutCell} disabled={(selectedCell.locked && !canUnlockCellsNotebook && !hasAdminRights) || isReadOnlyMode} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Couper la cellule"><Scissors size={14} /></button>
+                   <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
+                   <button onClick={handlePasteCell} disabled={!clipboardCell || (!canCreateCellsNotebook && !hasAdminRights) || isReadOnlyMode} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Coller la cellule"><ClipboardPaste size={14} /></button>
+                 </div>
+
+                 <div className="flex flex-shrink-0 items-center gap-2 ml-auto">
+                   {(canUnlockCellsNotebook || hasAdminRights) && (activeNotebook?.ownerUid === user?.uid || hasAdminRights) && (
+                     <button onClick={() => handleUpdateCellProperty(selectedCell.id, { locked: !selectedCell.locked })} disabled={isReadOnlyMode} className={`flex items-center gap-1.5 px-2 py-1.5 rounded transition-colors text-xs font-medium ${selectedCell.locked ? 'text-amber-600 bg-amber-100 dark:text-amber-400 dark:bg-amber-900/30' : 'text-gray-600 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-[#3c3c3c]'} disabled:opacity-30`} title={selectedCell.locked ? "Déverrouiller" : "Verrouiller"}>
+                       {selectedCell.locked ? <Lock size={14} /> : <Unlock size={14} />} <span className="hidden sm:inline">{selectedCell.locked ? 'Verrouillé' : 'Libre'}</span>
+                     </button>
+                   )}
+                   {selectedCell.type === 'code' && (
+                      <button onClick={() => handleUpdateCellProperty(selectedCell.id, { output: '', status: 'idle', executionCount: null })} disabled={!selectedCell.output && selectedCell.status !== 'error' || isReadOnlyMode} className="flex items-center gap-1.5 px-2 py-1.5 text-gray-600 dark:text-slate-300 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-[#3c3c3c] disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Effacer la console">
+                         <XCircle size={14} /> <span className="hidden sm:inline">Effacer console</span>
+                      </button>
+                   )}
+                   
+                   {(canCreateCellsNotebook || hasAdminRights) && (
+                     <button onClick={() => handleDeleteCell(selectedCell.id)} disabled={(selectedCell.locked && activeNotebook?.ownerUid !== user?.uid && !hasAdminRights) || isReadOnlyMode} className="flex items-center gap-1.5 px-2 py-1.5 text-red-600 bg-red-50 border border-red-200 dark:text-red-400 dark:bg-red-950/30 dark:border-red-900/50 hover:bg-red-100 dark:hover:bg-red-900/50 disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Supprimer la cellule">
+                        <Trash2 size={14} /> <span className="hidden sm:inline">Supprimer</span>
+                     </button>
+                   )}
+                 </div>
+               </div>
+            ) : (
+               <div className="bg-gray-100 dark:bg-[#1e1e1e] border-b border-gray-200 dark:border-slate-800 px-4 py-2 min-h-[44px] flex items-center justify-center">
+                 <span className="text-xs text-gray-500 dark:text-slate-500 italic">Sélectionnez une cellule pour modifier son type ou la supprimer</span>
+               </div>
+            )}
           </div>
           
-          <main className="max-w-5xl mx-auto py-8 px-4 flex-1 w-full">
-            <div className="space-y-4">
-              {activeCells.map((cell) => {
-                const remoteCursors = Object.entries(remoteCursorsState).filter(([uid, cursor]) => uid !== user?.uid && cursor.cellId === cell.id).map(([uid, cursor]) => ({ userId: uid, ...cursor }));
-                return (
-                  <Cell key={cell.id} cell={cell} isSelected={selectedCellId === cell.id} onSelect={setSelectedCellId} onUpdateProperty={handleUpdateCellProperty} onUpdateCode={handleUpdateCellCode} onUpdateCursor={handleUpdateCursor} remoteCursors={remoteCursors} pyodide={pyodide} isPyodideLoading={isPyodideLoading} isMonacoReady={isMonacoReady} registerRun={registerCellRun} handleSnapshot={handleSnapshot} isDark={isDark} hasAdminRights={hasAdminRights} getNextExecutionCount={getNextExecutionCount} userPermissions={userPermissions} />
-                )
-              })}
-              {userPermissions?.canCreate !== false && (
-                <div className="flex justify-center pt-8 pb-20">
-                  <button onClick={handleAddCell} className="flex items-center gap-2 px-6 py-2 bg-white dark:bg-[#252526] border border-gray-200 dark:border-[#3c3c3c] rounded-full hover:shadow-md transition-all"><Plus size={16}/> Ajouter une cellule</button>
-                </div>
-              )}
-            </div>
+          <main className="max-w-5xl mx-auto py-4 sm:py-8 px-2 sm:px-4 flex-1 w-full">
+            {activeCells.length === 0 ? (
+              <div className="text-center py-20 bg-white dark:bg-[#161b22] rounded-xl border border-dashed border-gray-300 dark:border-slate-700 shadow-sm mx-2">
+                <Code2 size={48} className="mx-auto text-gray-400 dark:text-slate-600 mb-4" />
+                <h2 className="text-xl font-medium text-gray-700 dark:text-slate-300 mb-4">Notebook vide</h2>
+                {(canCreateCellsNotebook || hasAdminRights) && !isReadOnlyMode && (
+                  <button onClick={handleAddCell} className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors shadow-sm"><Plus size={18} /> Créer la première cellule</button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {activeCells.map((cell) => {
+                  const remoteCursors = Object.entries(remoteCursorsState)
+                      .filter(([uid, cursor]) => uid !== user?.uid && cursor.cellId === cell.id)
+                      .map(([uid, cursor]) => ({ userId: uid, ...cursor }));
+
+                  return (
+                  <Cell 
+                    key={cell.id} 
+                    cell={cell} 
+                    isSelected={selectedCellId === cell.id}
+                    onSelect={setSelectedCellId}
+                    onUpdateProperty={handleUpdateCellProperty} 
+                    onUpdateCode={handleUpdateCellCode}
+                    onUpdateCursor={handleUpdateCursor}
+                    remoteCursors={remoteCursors}
+                    pyodide={pyodide} 
+                    isPyodideLoading={isPyodideLoading} 
+                    isMonacoReady={isMonacoReady} 
+                    registerRun={registerCellRun}
+                    handleSnapshot={handleSnapshot}
+                    isDark={isDark}
+                    hasAdminRights={hasAdminRights}
+                    getNextExecutionCount={getNextExecutionCount}
+                    readOnlyMode={isReadOnlyMode}
+                  />
+                )})}
+                {(canCreateCellsNotebook || hasAdminRights) && !isReadOnlyMode && (
+                  <div className="flex justify-center pt-6 pb-12">
+                    <button onClick={handleAddCell} className="flex items-center gap-2 px-6 py-2 bg-white dark:bg-[#252526] hover:bg-gray-50 dark:hover:bg-[#2d2d2d] border border-gray-200 dark:border-[#3c3c3c] text-gray-700 dark:text-[#cccccc] font-medium rounded transition-colors shadow-sm"><Plus size={16} /> Nouvelle cellule</button>
+                  </div>
+                )}
+              </div>
+            )}
           </main>
 
+          {isCodeModalOpen && activeNotebook && (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[99999] p-4">
+              <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-md shadow-2xl relative">
+                <button onClick={() => setIsCodeModalOpen(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Générer un Code Élève</h2>
+
+                <div className="mb-6 p-4 bg-gray-50 dark:bg-slate-800 rounded-lg text-center border border-gray-200 dark:border-slate-700">
+                  {activeNotebook.accessCode ? (
+                      <div>
+                        <div className="text-sm text-gray-500 dark:text-slate-400 mb-1">Code actuel</div>
+                        <div className="text-2xl font-mono font-bold text-emerald-600 dark:text-emerald-400 tracking-widest">{activeNotebook.accessCode}</div>
+                      </div>
+                  ) : (
+                      <div className="text-sm text-gray-500 dark:text-slate-400">Aucun code généré</div>
+                  )}
+                  <div className="flex justify-center gap-2 mt-4">
+                    <button onClick={handleGenerateAccessCode} className="text-sm bg-gray-200 dark:bg-slate-700 hover:bg-gray-300 dark:hover:bg-slate-600 text-gray-800 dark:text-slate-200 px-4 py-2 rounded transition-colors font-medium">
+                      {activeNotebook.accessCode ? 'Régénérer le code' : 'Générer un code'}
+                    </button>
+                    {activeNotebook.accessCode && (
+                      <button onClick={handleDisableAccessCode} className="text-sm bg-red-100 dark:bg-red-900/30 hover:bg-red-200 dark:hover:bg-red-900/50 text-red-600 dark:text-red-400 px-4 py-2 rounded transition-colors font-medium">
+                        Désactiver
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-slate-200 mb-3">Permissions pour les élèves (copies)</h3>
+                <div className="space-y-3 mb-6 bg-gray-50 dark:bg-slate-800/50 p-4 rounded-lg border border-gray-200 dark:border-slate-700/50">
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" checked={codePermissions.canUnlock} onChange={e => setCodePermissions({...codePermissions, canUnlock: e.target.checked})} className="w-4 h-4 rounded text-primary-600" />
+                    <span className="text-sm text-gray-700 dark:text-slate-300">Déverrouiller les cellules verrouillées</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" checked={codePermissions.canCreate} onChange={e => setCodePermissions({...codePermissions, canCreate: e.target.checked})} className="w-4 h-4 rounded text-primary-600" />
+                    <span className="text-sm text-gray-700 dark:text-slate-300">Créer et supprimer des cellules</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" checked={codePermissions.canShare} onChange={e => setCodePermissions({...codePermissions, canShare: e.target.checked})} className="w-4 h-4 rounded text-primary-600" />
+                    <span className="text-sm text-gray-700 dark:text-slate-300">Partager le notebook</span>
+                  </label>
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" checked={codePermissions.canGenerateCode} onChange={e => setCodePermissions({...codePermissions, canGenerateCode: e.target.checked})} className="w-4 h-4 rounded text-primary-600" />
+                    <span className="text-sm text-gray-700 dark:text-slate-300">Générer un code (Copie de copie)</span>
+                  </label>
+                </div>
+
+                <button onClick={handleSavePermissions} className="w-full bg-primary-600 hover:bg-primary-700 text-white py-2.5 rounded-lg font-medium transition-colors shadow-sm">Enregistrer les paramètres</button>
+              </div>
+            </div>
+          )}
+
           {isSharing && activeNotebook && (
-            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[9999] p-4">
-              <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl w-full max-w-2xl shadow-2xl relative border dark:border-slate-800">
-                <button onClick={() => setIsSharing(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={24}/></button>
-                <h2 className="text-2xl font-bold mb-1">Partage et Accès</h2>
-                <p className="text-sm text-gray-500 mb-6">Gérez qui peut voir ou modifier ce notebook.</p>
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[99999] p-4">
+              <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-md shadow-2xl relative">
+                <button onClick={() => setIsSharing(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
+                <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Gérer les accès</h2>
+                <p className="text-sm text-gray-500 dark:text-slate-400 mb-6">Invitez des collaborateurs sur le notebook <strong className="text-gray-900 dark:text-white">{activeNotebook.title}</strong>.</p>
                 
-                <form onSubmit={handleAddShare} className="flex gap-2 mb-8 relative">
+                <form onSubmit={handleAddShare} className="flex gap-2 mb-6 relative">
                   <div className="relative flex-1">
-                    <input type="text" placeholder="Entrer un pseudo..." value={shareUsername} onChange={(e) => { setShareUsername(e.target.value); setShowShareSuggestions(true); }} className="w-full bg-gray-50 dark:bg-slate-950 border dark:border-slate-700 rounded-xl px-4 py-3 outline-none focus:ring-2 ring-primary-500/20" />
+                    <input 
+                      type="text" 
+                      placeholder="Entrer le pseudo exact..." 
+                      value={shareUsername} 
+                      onChange={(e) => { setShareUsername(e.target.value); setShowShareSuggestions(true); }}
+                      onFocus={() => setShowShareSuggestions(true)}
+                      onBlur={() => setTimeout(() => setShowShareSuggestions(false), 200)}
+                      className="w-full bg-gray-50 dark:bg-slate-950 border border-gray-300 dark:border-slate-700 rounded-lg px-3 py-2.5 text-sm text-gray-900 dark:text-white focus:outline-none focus:border-primary-500" 
+                    />
                     {showShareSuggestions && shareUsername && availableShareUsers.length > 0 && (
-                        <ul className="absolute z-10 w-full bg-white dark:bg-slate-800 border dark:border-slate-700 mt-1 rounded-xl shadow-xl max-h-40 overflow-y-auto">
+                        <ul className="absolute z-10 w-full bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 mt-1 rounded-lg shadow-lg max-h-40 overflow-y-auto custom-scrollbar">
                             {availableShareUsers.map(u => (
-                                <li key={u.id} onClick={() => { setShareUsername(u.username); setShowShareSuggestions(false); }} className="px-4 py-2 hover:bg-gray-100 dark:hover:bg-slate-700 cursor-pointer flex items-center gap-2">
-                                    <Avatar name={u.username} size={12} role={u.role} /> {u.username}
+                                <li 
+                                    key={u.id} 
+                                    onClick={() => { setShareUsername(u.username); setShowShareSuggestions(false); }}
+                                    className="px-3 py-2 text-sm cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-900 dark:text-slate-200"
+                                >
+                                    {u.username}
                                 </li>
                             ))}
                         </ul>
                     )}
                   </div>
-                  <button type="submit" className="bg-primary-600 text-white px-6 rounded-xl font-bold hover:bg-primary-700 transition-colors">Ajouter</button>
+                  <button type="submit" className="bg-primary-600 hover:bg-primary-700 px-4 rounded-lg text-white text-sm font-medium transition-colors h-[42px]">Ajouter</button>
                 </form>
                 
-                <div className="border-t dark:border-slate-800 pt-6">
-                  <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">Collaborateurs ({activeNotebook.sharedWith.length})</h3>
-                  <div className="space-y-4 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
-                    {activeNotebook.sharedWith.length > 0 ? activeNotebook.sharedWith.map((s, idx) => {
-                         const name = typeof s === 'string' ? s : s.username;
-                         const p = typeof s === 'string' ? { canEdit: true, canDelete: true, canUnlock: false, canShare: false, canCreate: true } : s.permissions;
-                         const userObj = serverData.users.find(u => u.username === name);
+                {activeNotebook.sharedWith.length > 0 ? (
+                  <div>
+                    <span className="text-xs text-gray-400 dark:text-slate-400 font-semibold mb-3 block uppercase tracking-wider">Partagé avec :</span>
+                    <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
+                      {activeNotebook.sharedWith.map(s => {
+                         const uName = typeof s === 'string' ? s : s.username;
+                         const uRole = typeof s === 'string' ? 'editor' : (s.role || 'editor');
+                         const sharedUserObj = serverData.users.find(user => user.username === uName);
                          return (
-                            <div key={idx} className="bg-gray-50 dark:bg-slate-800/40 p-4 rounded-2xl border dark:border-slate-800/50">
-                                <div className="flex justify-between items-center mb-3">
-                                    <div className="flex items-center gap-3">
-                                        <Avatar name={name} size={16} role={userObj?.role} />
-                                        <div>
-                                            <span className="font-bold block">{name}</span>
-                                            <span className="text-[10px] text-gray-500 uppercase">{userObj?.role || 'eleve'}</span>
-                                        </div>
-                                    </div>
-                                    <button onClick={() => handleRemoveShare(name)} className="p-2 text-gray-400 hover:text-red-500"><Trash2 size={18}/></button>
-                                </div>
-                                <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                                    <PermissionToggle label="Éditer" active={p.canEdit} onClick={() => handleUpdateMemberPermissions(name, { canEdit: !p.canEdit })} />
-                                    <PermissionToggle label="Créer" active={p.canCreate} onClick={() => handleUpdateMemberPermissions(name, { canCreate: !p.canCreate })} />
-                                    <PermissionToggle label="Effacer" active={p.canDelete} onClick={() => handleUpdateMemberPermissions(name, { canDelete: !p.canDelete })} />
-                                    <PermissionToggle label="Unlock" active={p.canUnlock} onClick={() => handleUpdateMemberPermissions(name, { canUnlock: !p.canUnlock })} />
-                                    <PermissionToggle label="Inviter" active={p.canShare} onClick={() => handleUpdateMemberPermissions(name, { canShare: !p.canShare })} />
-                                </div>
-                            </div>
-                         );
-                    }) : (
-                        <div className="text-center py-10 opacity-50"><Users size={40} className="mx-auto mb-2" /><p>Aucun collaborateur</p></div>
-                    )}
+                        <div key={uName} className="flex justify-between items-center bg-gray-50 dark:bg-slate-800 px-3 py-2.5 rounded-lg border border-gray-200 dark:border-slate-700">
+                          <div className="flex items-center gap-2 cursor-pointer hover:underline min-w-0 flex-1" onClick={() => { if(sharedUserObj) setViewingUser(sharedUserObj); }}>
+                            <User size={16} className="text-primary-500 shrink-0" />
+                            <span className="text-sm text-gray-700 dark:text-slate-200 font-medium truncate">{uName}</span>
+                          </div>
+                          
+                          <div className="flex items-center gap-2 ml-2">
+                             {(activeNotebook.ownerUid === userData?.id || hasAdminRights) && (
+                                <button 
+                                  onClick={() => handleToggleShareRole(uName)}
+                                  className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-black uppercase transition-all ${uRole === 'editor' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}
+                                  title={`Changer en ${uRole === 'editor' ? 'Lecteur' : 'Éditeur'}`}
+                                >
+                                    {uRole === 'editor' ? <Edit2 size={10}/> : <Eye size={10}/>}
+                                    {uRole === 'editor' ? 'Éditeur' : 'Lecteur'}
+                                </button>
+                             )}
+                             <button onClick={() => handleRemoveShare(uName)} className="text-gray-400 hover:text-red-500 transition-colors p-1 hover:bg-gray-200 dark:hover:bg-slate-700 rounded"><X size={16}/></button>
+                          </div>
+                        </div>
+                      )})}
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="text-center p-4 bg-gray-50 dark:bg-slate-800/50 rounded-lg border border-gray-200 dark:border-slate-700 border-dashed">
+                    <p className="text-sm text-gray-500">Ce notebook n'est partagé avec personne pour le moment.</p>
+                  </div>
+                )}
               </div>
             </div>
-          )}
-
-          {isCodeModalOpen && activeNotebook && (
-            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[9999] p-4">
-              <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl w-full max-w-md shadow-2xl relative">
-                <button onClick={() => setIsCodeModalOpen(false)} className="absolute top-4 right-4"><X size={20}/></button>
-                <h2 className="text-xl font-bold mb-4">Code d'invitation rapide</h2>
-                <div className="bg-gray-100 dark:bg-slate-950 p-4 rounded-xl text-center mb-6 border dark:border-slate-800">
-                  {activeNotebook.accessCode ? (
-                    <div className="text-3xl font-mono font-black text-emerald-500 tracking-widest">{activeNotebook.accessCode}</div>
-                  ) : <span className="opacity-50 italic">Aucun code actif</span>}
-                  <div className="flex gap-2 mt-4 justify-center">
-                    <button onClick={handleGenerateAccessCode} className="bg-primary-600 text-white px-4 py-2 rounded-lg text-sm">{activeNotebook.accessCode ? 'Régénérer' : 'Activer'}</button>
-                    {activeNotebook.accessCode && <button onClick={handleDisableAccessCode} className="bg-red-500 text-white px-4 py-2 rounded-lg text-sm">Désactiver</button>}
-                  </div>
-                </div>
-                <h3 className="text-sm font-bold mb-3 uppercase tracking-wider opacity-60">Permissions par défaut (copies)</h3>
-                <div className="space-y-2 mb-6">
-                    <PermissionToggle label="Déverrouiller cellules" active={codePermissions.canUnlock} onClick={() => setCodePermissions({...codePermissions, canUnlock: !codePermissions.canUnlock})} wide />
-                    <PermissionToggle label="Ajouter/Supprimer cellules" active={codePermissions.canCreate} onClick={() => setCodePermissions({...codePermissions, canCreate: !codePermissions.canCreate})} wide />
-                    <PermissionToggle label="Partager la copie" active={codePermissions.canShare} onClick={() => setCodePermissions({...codePermissions, canShare: !codePermissions.canShare})} wide />
-                </div>
-                <button onClick={handleSavePermissions} className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold">Enregistrer</button>
-              </div>
-            </div>
-          )}
-
-          {viewingUser && (
-              <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[10000] p-4">
-                <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl w-full max-w-sm shadow-2xl text-center relative border dark:border-slate-800">
-                  <button onClick={() => setViewingUser(null)} className="absolute top-4 right-4"><X size={20}/></button>
-                  <div className="flex justify-center mb-4"><Avatar name={viewingUser.username} role={viewingUser.role} size={48} /></div>
-                  <h2 className="text-2xl font-black mb-1">{viewingUser.username}</h2>
-                  <div className="mb-4"><span className="px-3 py-1 bg-primary-100 text-primary-600 dark:bg-primary-900/30 dark:text-primary-400 rounded-full text-[10px] font-bold uppercase tracking-widest">{viewingUser.role || 'eleve'}</span></div>
-                  <div className="bg-gray-50 dark:bg-slate-800/50 p-4 rounded-xl text-left text-sm italic opacity-80">{viewingUser.description || "Pas de description."}</div>
-                </div>
-              </div>
           )}
         </div>
       );
     }
-
-    const PermissionToggle = ({ label, active, onClick, wide=false }) => (
-        <button 
-            onClick={onClick} 
-            className={`flex items-center justify-between gap-2 px-3 py-2 rounded-xl border transition-all text-xs font-bold ${wide ? 'w-full' : ''} ${active ? 'bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800' : 'bg-gray-50 text-gray-400 border-gray-200 dark:bg-slate-900 dark:border-slate-800'}`}
-        >
-            <span className="truncate">{label}</span>
-            {active ? <ToggleRight size={18}/> : <ToggleLeft size={18}/>}
-        </button>
-    );
 
     const root = createRoot(document.getElementById('root'));
     root.render(<App />);
