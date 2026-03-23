@@ -859,7 +859,7 @@ except Exception:
 
           socketRef.current.on('cursor_updated', (c) => {
             injectCursorStyle(c.userId, c.username, c.color);
-            setRemoteCursorsState(prev => ({ ...prev, [c.userId]: c }));
+            setRemoteCursorsState(prev => ({ ...prev, [c.userId]: { ...c, timestamp: Date.now() } }));
           });
         }
 
@@ -924,6 +924,7 @@ except Exception:
           const cursorData = {
               userId: user.uid,
               cellId,
+              notebookId: currentNbId,
               lineNumber: positionInfo.lineNumber,
               column: positionInfo.column,
               selection: positionInfo.selection,
@@ -949,7 +950,7 @@ except Exception:
       };
 
       const handleUndo = () => {
-        if (historyPast.length === 0 || !currentNbId) return;
+        if (historyPast.length === 0 || !currentNbId || isReadOnlyMode) return;
         updateServerFullSync(currentData => {
            const previousStateStr = historyPast[historyPast.length - 1];
            const previousCells = JSON.parse(previousStateStr);
@@ -965,7 +966,7 @@ except Exception:
       };
 
       const handleRedo = () => {
-        if (historyFuture.length === 0 || !currentNbId) return;
+        if (historyFuture.length === 0 || !currentNbId || isReadOnlyMode) return;
         updateServerFullSync(currentData => {
            const nextStateStr = historyFuture[0];
            const nextCells = JSON.parse(nextStateStr);
@@ -1334,7 +1335,6 @@ for key in list(globals().keys()):
          }
       };
 
-      // NOUVEAU: Génération propre d'un vrai fichier .ipynb formaté Jupyter
       const handleDownload = () => {
         const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId);
         const nbCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
@@ -1433,25 +1433,23 @@ for key in list(globals().keys()):
       const hasAdminRights = userData?.role === 'admin' || userData?.role === 'prof';
       const isCopiedNotebook = !!activeNotebook?.templateSourceId;
 
-      // NOUVEAU: Détermine si l'utilisateur est en lecture seule sur ce notebook
       const isReadOnlyMode = useMemo(() => {
           if (!activeNotebook || !userData) return true;
           if (activeNotebook.ownerUid === userData.id || hasAdminRights) return false;
           const share = activeNotebook.sharedWith.find(s => (typeof s === 'string' ? s : s.username) === userData.username);
-          if (typeof share === 'string') return false; // Ancien format = éditeur par défaut
+          if (typeof share === 'string') return false; 
           return share?.role === 'reader';
-      }, [activeNotebook, userData, hasAdminRights]);
+      }, [activeNotebook, userData, hasAdminRights, serverData]);
 
       const canShareNotebook = hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canShare !== false;
       const canGenCodeNotebook = hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canGenerateCode !== false;
       const canCreateCellsNotebook = !isReadOnlyMode && (hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canCreate !== false);
       const canUnlockCellsNotebook = !isReadOnlyMode && (hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canUnlock !== false);
 
-      // NOUVEAU: Liste des personnes en ligne (Style Google Docs)
       const onlineUsers = useMemo(() => {
           if (!currentNbId) return [];
           const now = Date.now();
-          return Object.values(remoteCursorsState).filter(c => c.userId !== user?.uid && c.timestamp > now - 10000);
+          return Object.values(remoteCursorsState).filter(c => c.notebookId === currentNbId && c.userId !== user?.uid && c.timestamp > now - 10000);
       }, [remoteCursorsState, currentNbId, user?.uid]);
 
       const selectedCell = activeCells.find(c => c.id === selectedCellId);
@@ -1671,7 +1669,7 @@ for key in list(globals().keys()):
             )}
             {viewingUser && (
               <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[99999] p-4">
-                <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-sm shadow-2xl relative text-center">
+                <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 p-6 rounded-xl w-full max-w-sm shadow-2xl relative text-center">
                   <button onClick={() => setViewingUser(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
                   <div className="flex justify-center mb-4">
                      <Avatar name={viewingUser.username} role={viewingUser.role} size={48} />
@@ -1709,7 +1707,13 @@ for key in list(globals().keys()):
                     <div className={`flex items-center gap-2 group min-w-0 ${activeNotebook?.ownerUid === user?.uid || hasAdminRights ? 'cursor-pointer' : ''}`} onClick={() => { if (activeNotebook?.ownerUid === user?.uid || hasAdminRights) { setEditTitle(activeNotebook.title); setIsEditingTitle(true); } }}>
                       <div className="flex flex-col">
                          <h1 className="text-base sm:text-lg font-bold text-gray-900 dark:text-slate-100 truncate max-w-[150px] sm:max-w-[300px]">{activeNotebook?.title || "Chargement..."}</h1>
-                         {isReadOnlyMode && <span className="text-[10px] font-black text-amber-500 uppercase tracking-widest flex items-center gap-1"><Eye size={10}/> Lecture seule</span>}
+                         <div className="flex items-center gap-1.5">
+                            {isReadOnlyMode ? (
+                                <span className="text-[9px] font-black text-amber-500 uppercase tracking-widest flex items-center gap-1 bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20"><Eye size={10}/> Lecteur</span>
+                            ) : (
+                                <span className="text-[9px] font-black text-emerald-500 uppercase tracking-widest flex items-center gap-1 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20"><Edit2 size={10}/> Éditeur</span>
+                            )}
+                         </div>
                       </div>
                       {(activeNotebook?.ownerUid === user?.uid || hasAdminRights) && <Edit2 size={14} className="text-gray-400 dark:text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />}
                     </div>
@@ -1723,18 +1727,23 @@ for key in list(globals().keys()):
               </div>
               
               <div className="flex items-center gap-2 sm:gap-4 overflow-x-auto no-scrollbar pb-1 sm:pb-0 w-full sm:w-auto">
-                {/* NOUVEAU: Liste des personnes en ligne (Style Google Docs) */}
-                <div className="flex items-center -space-x-2 mr-2">
+                
+                {/* INDICATEUR DE PRÉSENCE (GOOGLE DOCS STYLE) */}
+                <div className="flex items-center -space-x-1.5 mr-2 px-2 py-1 bg-gray-100 dark:bg-slate-800/40 rounded-full border border-gray-200 dark:border-slate-700/50">
+                    <div className="w-6 h-6 rounded-full border-2 border-primary-500 flex items-center justify-center text-primary-500 text-[9px] font-black bg-primary-500/10 mr-1" title="Vous êtes en ligne">
+                        {userData?.username?.[0].toUpperCase()}
+                    </div>
                     {onlineUsers.map(u => (
                         <div 
                           key={u.userId} 
-                          className="w-8 h-8 rounded-full border-2 border-white dark:border-[#161b22] flex items-center justify-center text-white text-[10px] font-black shadow-sm transition-transform hover:scale-110 cursor-help" 
+                          className="w-6 h-6 rounded-full border-2 border-white dark:border-[#161b22] flex items-center justify-center text-white text-[9px] font-black shadow-sm transition-transform hover:scale-125 cursor-help" 
                           style={{ backgroundColor: u.color }}
                           title={`${u.username} est en ligne`}
                         >
-                            {u.username[0].toUpperCase()}
+                            {u.username?.[0].toUpperCase()}
                         </div>
                     ))}
+                    {onlineUsers.length === 0 && <span className="text-[8px] font-bold text-gray-400 dark:text-gray-500 ml-2 uppercase tracking-tighter">Seul</span>}
                 </div>
 
                 <div className="flex flex-shrink-0 items-center gap-1 border-r border-gray-200 dark:border-slate-700 pr-2 sm:pr-4 mr-1 sm:mr-2">
@@ -1994,7 +2003,7 @@ for key in list(globals().keys()):
                              {(activeNotebook.ownerUid === userData?.id || hasAdminRights) && (
                                 <button 
                                   onClick={() => handleToggleShareRole(uName)}
-                                  className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-black uppercase transition-all ${uRole === 'editor' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}
+                                  className={`flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-black uppercase transition-all ${uRole === 'editor' ? 'bg-emerald-100 text-emerald-600 border-emerald-200' : 'bg-amber-100 text-amber-600 border-amber-200'}`}
                                   title={`Changer en ${uRole === 'editor' ? 'Lecteur' : 'Éditeur'}`}
                                 >
                                     {uRole === 'editor' ? <Edit2 size={10}/> : <Eye size={10}/>}
