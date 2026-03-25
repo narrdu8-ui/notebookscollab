@@ -182,6 +182,13 @@ io.on('connection', (socket) => {
                     if (dbNotebooks) await dbNotebooks.deleteOne({ id: action.payload.notebookId });
                     if (dbCells) await dbCells.deleteMany({ notebookId: action.payload.notebookId });
                     break;
+                case 'DELETE_NOTEBOOKS':
+                    const nIds = action.payload.notebookIds;
+                    globalData.notebooks = globalData.notebooks.filter(n => !nIds.includes(n.id));
+                    globalData.cells = globalData.cells.filter(c => !nIds.includes(c.notebookId));
+                    if (dbNotebooks) await dbNotebooks.deleteMany({ id: { $in: nIds } });
+                    if (dbCells) await dbCells.deleteMany({ notebookId: { $in: nIds } });
+                    break;
                 case 'ADD_USER':
                     globalData.users.push(action.payload);
                     if (dbUsers) await dbUsers.insertOne({ ...action.payload });
