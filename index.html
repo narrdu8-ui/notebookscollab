@@ -1694,10 +1694,14 @@ for key in list(globals().keys()):
                                ))}
                             </div>
                           </div>
+                           <div className="mt-4 pt-4 border-t border-gray-100 dark:border-slate-700">
+                               <button onClick={handleLogout} className="w-full text-left px-3 py-2 text-sm text-red-600 dark:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors flex items-center gap-2">
+                                  <LogOut size={16}/> Se déconnecter
+                               </button>
+                           </div>
                         </div>
                      )}
                   </div>
-                  <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-colors" title="Se déconnecter"><LogOut size={20}/></button>
                 </div>
               </header>
 
@@ -1734,9 +1738,14 @@ for key in list(globals().keys()):
                         }} className="bg-amber-500 hover:bg-amber-600 text-white px-5 py-2 rounded-full text-sm font-semibold transition-all hover:shadow-lg flex items-center gap-2 group">
                             <Pin size={16} className="group-hover:scale-110 transition-transform" /> Épingler
                         </button>
-                        <button onClick={handleBulkDelete} className="bg-red-500 hover:bg-red-600 text-white px-5 py-2 rounded-full text-sm font-semibold transition-all hover:shadow-lg flex items-center gap-2 group">
-                            <Trash2 size={16} className="group-hover:scale-110 transition-transform" /> Supprimer
-                        </button>
+                        {Array.from(selectedNotebooks).every(id => {
+                            const nb = serverData.notebooks.find(n => n.id === id);
+                            return nb && (nb.ownerUid === user?.uid || hasAdminRights);
+                        }) && (
+                            <button onClick={handleBulkDelete} className="bg-red-500 hover:bg-red-600 text-white px-5 py-2 rounded-full text-sm font-semibold transition-all hover:shadow-lg flex items-center gap-2 group">
+                                <Trash2 size={16} className="group-hover:scale-110 transition-transform" /> Supprimer
+                            </button>
+                        )}
                         <button onClick={() => setSelectedNotebooks(new Set())} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 p-2 rounded-full cursor-pointer">
                             <X size={16} />
                         </button>
@@ -1776,21 +1785,19 @@ for key in list(globals().keys()):
                          return (
                           <div key={nb.id} onClick={() => openNotebook(nb.id)} className="bg-white dark:bg-slate-900 border border-primary-100 dark:border-primary-900/50 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 relative overflow-hidden shadow-sm flex flex-col justify-between">
                             <div className="absolute top-0 left-0 w-1 h-full bg-primary-500 z-20"></div>
-                            {isPrivileged && (
-                                <div className="absolute top-4 left-4 z-20">
-                                    <input type="checkbox" checked={selectedNotebooks.has(nb.id)} onChange={(e) => handleToggleSelectNotebook(e, nb.id)} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded text-primary-600 cursor-pointer" />
-                                </div>
-                            )}
+                            <div className="absolute top-4 left-4 z-20">
+                                <input type="checkbox" checked={selectedNotebooks.has(nb.id)} onChange={(e) => handleToggleSelectNotebook(e, nb.id)} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded text-primary-600 cursor-pointer" />
+                            </div>
                             
-                            <div className={`flex items-center gap-3 mb-2 pr-8 ${isPrivileged ? 'pl-8' : 'pl-4'} relative z-10`}>
+                            <div className="flex items-center gap-3 mb-2 pr-8 pl-8 relative z-10">
                                <img src="logo_nb.png" alt="Logo" className="w-6 h-6 object-contain shrink-0" onError={(e)=>e.target.style.display='none'} />
                                <h3 className="text-lg font-medium truncate">{nb.title}</h3>
                                {(nb.pinnedBy || []).includes(user?.uid) && <Pin size={14} className="text-primary-500 fill-primary-500 shrink-0" />}
                             </div>
                             
-                            <p className={`text-xs text-gray-400 dark:text-slate-500 truncate relative z-10 mt-1 ${isPrivileged ? 'pl-8' : 'pl-4'}`}>Ouvert le: {formatDate(nb.lastAccessed || nb.createdAt)}</p>
+                            <p className="text-xs text-gray-400 dark:text-slate-500 truncate relative z-10 mt-1 pl-8">Ouvert le: {formatDate(nb.lastAccessed || nb.createdAt)}</p>
                             
-                            <div className={`flex items-center gap-2 relative z-10 mt-4 ${isPrivileged ? 'pl-8' : 'pl-4'}`}>
+                            <div className="flex items-center gap-2 relative z-10 mt-4 pl-8">
                                <Avatar name={nb.ownerUsername} size={18} role={owner?.role} />
                                <span onClick={(e) => { e.stopPropagation(); setViewingUser(owner); }} className="text-sm text-primary-600 dark:text-primary-400 truncate cursor-pointer hover:underline">{nb.ownerUsername}</span>
                             </div>
