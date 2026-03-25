@@ -804,6 +804,10 @@ except Exception:
               case 'DELETE_NOTEBOOK':
                   next.notebooks = (next.notebooks||[]).filter(n => n.id !== action.payload.notebookId);
                   next.cells = (next.cells||[]).filter(c => c.notebookId !== action.payload.notebookId); break;
+              case 'DELETE_NOTEBOOKS':
+                  const nIds = action.payload.notebookIds;
+                  next.notebooks = (next.notebooks||[]).filter(n => !nIds.includes(n.id));
+                  next.cells = (next.cells||[]).filter(c => !nIds.includes(c.notebookId)); break;
               case 'ADD_USER': next.users = [...(next.users||[]), action.payload]; break;
               case 'UPDATE_USER': next.users = (next.users||[]).map(u => u.id === action.payload.userId ? { ...u, ...action.payload.data } : u); break;
           }
@@ -1300,12 +1304,16 @@ for key in list(globals().keys()):
         else delete cellRunRefs.current[id];
       };
 
-      const handleAddCell = () => {
+      const handleAddCell = (top = false) => {
         if (!user || !currentNbId) return;
         handleSnapshot();
         const newCellId = generateUUID();
         const nbCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId);
-        const newOrder = nbCells.length > 0 ? Math.max(...nbCells.map(c => c.order)) + 10 : 10;
+        let newOrder = 10;
+        if (nbCells.length > 0) {
+            if (top) newOrder = Math.min(...nbCells.map(c => c.order)) - 10;
+            else newOrder = Math.max(...nbCells.map(c => c.order)) + 10;
+        }
         const newCell = { id: newCellId, notebookId: currentNbId, code: '', type: 'code', output: '', status: 'idle', order: newOrder, locked: false, executionCount: null };
         
         dispatchServerAction({ type: 'ADD_CELL', payload: newCell });
@@ -1429,6 +1437,37 @@ for key in list(globals().keys()):
           setSelectedCellId(newCellId);
       };
 
+      const [selectedNotebooks, setSelectedNotebooks] = useState(new Set());
+
+      const formatDate = (ts) => {
+          if (!ts) return 'Inconnu';
+          return new Date(ts).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute:'2-digit' });
+      };
+
+      const openNotebook = (nbId) => {
+          setCurrentNbId(nbId);
+          setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null);
+          dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: nbId, data: { lastAccessed: Date.now() } } });
+      };
+
+      const handleToggleSelectNotebook = (e, nbId) => {
+          e.stopPropagation();
+          const next = new Set(selectedNotebooks);
+          if (next.has(nbId)) next.delete(nbId);
+          else next.add(nbId);
+          setSelectedNotebooks(next);
+      };
+
+      const handleBulkDelete = () => {
+          if (selectedNotebooks.size === 0) return;
+          if (window.confirm(`Supprimer définitivement les ${selectedNotebooks.size} notebooks sélectionnés ?`)) {
+              const ids = Array.from(selectedNotebooks);
+              dispatchServerAction({ type: 'DELETE_NOTEBOOKS', payload: { notebookIds: ids } });
+              if (ids.includes(currentNbId)) { setCurrentNbId(null); setSelectedCellId(null); setHistoryPast([]); setHistoryFuture([]); }
+              setSelectedNotebooks(new Set());
+          }
+      };
+
       const getNextExecutionCount = () => {
           const nbCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId);
           const maxCount = Math.max(0, ...nbCells.map(c => c.executionCount || 0));
@@ -1453,8 +1492,10 @@ for key in list(globals().keys()):
       const isSelectedCellFirst = activeCells[0]?.id === selectedCellId;
       const isSelectedCellLast = activeCells[activeCells.length - 1]?.id === selectedCellId;
 
-      const myFilteredNotebooks = myNotebooks.filter(nb => nb.title.toLowerCase().includes(searchQuery.toLowerCase()));
-      const sharedFilteredNotebooks = sharedNotebooks.filter(nb => nb.title.toLowerCase().includes(searchQuery.toLowerCase()));
+      const myFilteredNotebooks = myNotebooks.filter(nb => nb.title.toLowerCase().includes(searchQuery.toLowerCase()))
+         .sort((a, b) => (b.lastAccessed || new Date(b.createdAt).getTime() || 0) - (a.lastAccessed || new Date(a.createdAt).getTime() || 0));
+      const sharedFilteredNotebooks = sharedNotebooks.filter(nb => nb.title.toLowerCase().includes(searchQuery.toLowerCase()))
+         .sort((a, b) => (b.lastAccessed || new Date(b.createdAt).getTime() || 0) - (a.lastAccessed || new Date(a.createdAt).getTime() || 0));
 
       const availableShareUsers = (serverData.users || []).filter(u => 
           u.id !== user?.uid && 
@@ -1588,21 +1629,36 @@ for key in list(globals().keys()):
                  </div>
               </div>
 
-              <div className="space-y-10">
+              <div className="space-y-10 relative">
+                {selectedNotebooks.size > 0 && (
+                    <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-gray-900 border border-gray-700 text-white px-6 py-3 rounded-full shadow-2xl z-[99999] flex items-center gap-4">
+                        <span className="font-semibold text-sm">{selectedNotebooks.size} sélectionné(s)</span>
+                        <button onClick={handleBulkDelete} className="bg-red-600 hover:bg-red-500 text-white px-4 py-1.5 rounded-full text-sm font-medium transition-colors flex items-center gap-2">
+                            <Trash2 size={16} /> Supprimer
+                        </button>
+                        <button onClick={() => setSelectedNotebooks(new Set())} className="text-gray-400 hover:text-white transition-colors bg-gray-800 hover:bg-gray-700 p-1.5 rounded-full">
+                            <X size={16} />
+                        </button>
+                    </div>
+                )}
                 <section>
                   <h2 className="text-xl font-semibold mb-4 flex items-center gap-2"><Lock size={18} /> Créés par moi</h2>
                   {myFilteredNotebooks.length === 0 ? <p className="text-gray-500 italic bg-white dark:bg-slate-900/50 p-6 rounded-xl border border-gray-200 dark:border-slate-800 border-dashed">Aucun notebook trouvé.</p> : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {myFilteredNotebooks.map(nb => (
-                        <div key={nb.id} onClick={() => { setCurrentNbId(nb.id); setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null); }} className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 shadow-sm group relative overflow-hidden">
+                        <div key={nb.id} onClick={() => openNotebook(nb.id)} className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 shadow-sm group relative overflow-hidden">
+                          <div className="absolute top-4 left-4 z-20">
+                              <input type="checkbox" checked={selectedNotebooks.has(nb.id)} onChange={(e) => handleToggleSelectNotebook(e, nb.id)} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded text-primary-600 cursor-pointer" />
+                          </div>
                           <button onClick={(e) => handleDeleteNotebook(e, nb.id)} className="absolute top-4 right-4 p-1.5 text-gray-400 hover:text-red-500 hover:bg-gray-100 dark:hover:bg-slate-800 rounded transition-all opacity-0 group-hover:opacity-100 z-20" title="Supprimer ce notebook"><Trash2 size={16} /></button>
                           
-                          <div className="flex items-center gap-3 mb-2 pr-8 relative z-10">
+                          <div className="flex items-center gap-3 mb-2 pr-8 pl-8 relative z-10">
                              <img src="logo_nb.png" alt="Logo" className="w-6 h-6 object-contain shrink-0" onError={(e)=>e.target.style.display='none'} />
                              <h3 className="text-lg font-medium truncate">{nb.title}</h3>
                           </div>
                           
-                          <p className="text-sm text-gray-500 dark:text-slate-500 truncate relative z-10 mt-2">Partagé avec: {nb.sharedWith.length === 0 ? 'Personne' : nb.sharedWith.join(', ')}</p>
+                          <p className="text-xs text-gray-400 dark:text-slate-500 truncate relative z-10 mt-1 pl-8">Ouvert le: {formatDate(nb.lastAccessed || nb.createdAt)}</p>
+                          <p className="text-sm text-gray-500 dark:text-slate-500 truncate relative z-10 mt-2 pl-8">Partagé avec: {nb.sharedWith.length === 0 ? 'Personne' : nb.sharedWith.join(', ')}</p>
                         </div>
                       ))}
                     </div>
@@ -1614,16 +1670,24 @@ for key in list(globals().keys()):
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {sharedFilteredNotebooks.map(nb => {
                          const owner = serverData.users.find(u => u.id === nb.ownerUid);
+                         const isPrivileged = owner?.role === 'admin' || userData?.role === 'admin' || hasAdminRights;
                          return (
-                          <div key={nb.id} onClick={() => { setCurrentNbId(nb.id); setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null); }} className="bg-white dark:bg-slate-900 border border-primary-100 dark:border-primary-900/50 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 relative overflow-hidden shadow-sm flex flex-col justify-between">
+                          <div key={nb.id} onClick={() => openNotebook(nb.id)} className="bg-white dark:bg-slate-900 border border-primary-100 dark:border-primary-900/50 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 relative overflow-hidden shadow-sm flex flex-col justify-between">
                             <div className="absolute top-0 left-0 w-1 h-full bg-primary-500 z-20"></div>
+                            {isPrivileged && (
+                                <div className="absolute top-4 left-4 z-20">
+                                    <input type="checkbox" checked={selectedNotebooks.has(nb.id)} onChange={(e) => handleToggleSelectNotebook(e, nb.id)} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded text-primary-600 cursor-pointer" />
+                                </div>
+                            )}
                             
-                            <div className="flex items-center gap-3 mb-4 pr-8 relative z-10">
+                            <div className={`flex items-center gap-3 mb-2 pr-8 ${isPrivileged ? 'pl-8' : 'pl-4'} relative z-10`}>
                                <img src="logo_nb.png" alt="Logo" className="w-6 h-6 object-contain shrink-0" onError={(e)=>e.target.style.display='none'} />
                                <h3 className="text-lg font-medium truncate">{nb.title}</h3>
                             </div>
                             
-                            <div className="flex items-center gap-2 relative z-10">
+                            <p className={`text-xs text-gray-400 dark:text-slate-500 truncate relative z-10 mt-1 ${isPrivileged ? 'pl-8' : 'pl-4'}`}>Ouvert le: {formatDate(nb.lastAccessed || nb.createdAt)}</p>
+                            
+                            <div className={`flex items-center gap-2 relative z-10 mt-4 ${isPrivileged ? 'pl-8' : 'pl-4'}`}>
                                <Avatar name={nb.ownerUsername} size={18} role={owner?.role} />
                                <span onClick={(e) => { e.stopPropagation(); setViewingUser(owner); }} className="text-sm text-primary-600 dark:text-primary-400 truncate cursor-pointer hover:underline">{nb.ownerUsername}</span>
                             </div>
@@ -1843,11 +1907,16 @@ for key in list(globals().keys()):
                 <Code2 size={48} className="mx-auto text-gray-400 dark:text-slate-600 mb-4" />
                 <h2 className="text-xl font-medium text-gray-700 dark:text-slate-300 mb-4">Notebook vide</h2>
                 {(canCreateCellsNotebook || hasAdminRights) && (
-                  <button onClick={handleAddCell} className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors shadow-sm"><Plus size={18} /> Créer la première cellule</button>
+                  <button onClick={() => handleAddCell(false)} className="inline-flex items-center gap-2 px-5 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors shadow-sm"><Plus size={18} /> Créer la première cellule</button>
                 )}
               </div>
             ) : (
               <div className="space-y-2">
+                {(canCreateCellsNotebook || hasAdminRights) && (
+                   <div className="flex justify-center mb-4 mt-2">
+                     <button onClick={() => handleAddCell(true)} className="flex items-center gap-2 px-6 py-2 bg-gray-50 dark:bg-[#1e1e1e] border-2 border-dashed border-gray-300 dark:border-slate-700 hover:border-primary-500 hover:text-primary-600 text-gray-500 dark:text-slate-400 rounded-lg transition-all shadow-sm text-sm"><Plus size={16} /> Ajouter une cellule en haut</button>
+                   </div>
+                )}
                 {activeCells.map((cell) => {
                   const remoteCursors = Object.entries(remoteCursorsState)
                       .filter(([uid, cursor]) => uid !== user?.uid && cursor.cellId === cell.id)
@@ -1876,7 +1945,7 @@ for key in list(globals().keys()):
                 )})}
                 {(canCreateCellsNotebook || hasAdminRights) && (
                   <div className="flex justify-center pt-6 pb-12">
-                    <button onClick={handleAddCell} className="flex items-center gap-2 px-6 py-2 bg-white dark:bg-[#252526] hover:bg-gray-50 dark:hover:bg-[#2d2d2d] border border-gray-200 dark:border-[#3c3c3c] text-gray-700 dark:text-[#cccccc] font-medium rounded transition-colors shadow-sm"><Plus size={16} /> Nouvelle cellule</button>
+                    <button onClick={() => handleAddCell(false)} className="flex items-center gap-2 px-6 py-2 bg-white dark:bg-[#252526] hover:bg-gray-50 dark:hover:bg-[#2d2d2d] border border-gray-200 dark:border-[#3c3c3c] text-gray-700 dark:text-[#cccccc] font-medium rounded transition-colors shadow-sm"><Plus size={16} /> Nouvelle cellule</button>
                   </div>
                 )}
               </div>
