@@ -1311,8 +1311,20 @@ for key in list(globals().keys()):
         const nbCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId);
         let newOrder = 10;
         if (nbCells.length > 0) {
-            if (top) newOrder = Math.min(...nbCells.map(c => c.order)) - 10;
-            else newOrder = Math.max(...nbCells.map(c => c.order)) + 10;
+            nbCells.sort((a, b) => a.order - b.order);
+            if (selectedCellId && !top) {
+                const selIndex = nbCells.findIndex(c => c.id === selectedCellId);
+                if (selIndex !== -1) {
+                    if (selIndex === nbCells.length - 1) newOrder = nbCells[selIndex].order + 10;
+                    else newOrder = (nbCells[selIndex].order + nbCells[selIndex+1].order) / 2;
+                } else {
+                    newOrder = nbCells[nbCells.length - 1].order + 10;
+                }
+            } else if (top) {
+                newOrder = nbCells[0].order - 10;
+            } else {
+                newOrder = nbCells[nbCells.length - 1].order + 10;
+            }
         }
         const newCell = { id: newCellId, notebookId: currentNbId, code: '', type: 'code', output: '', status: 'idle', order: newOrder, locked: false, executionCount: null };
         
@@ -2036,9 +2048,10 @@ for key in list(globals().keys()):
                                 <li 
                                     key={u.id} 
                                     onClick={() => { setShareUsername(u.username); setShowShareSuggestions(false); }}
-                                    className="px-3 py-2 text-sm cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-900 dark:text-slate-200"
+                                    className="px-3 py-2 text-sm cursor-pointer hover:bg-gray-100 dark:hover:bg-slate-700 text-gray-900 dark:text-slate-200 flex items-center gap-2"
                                 >
-                                    {u.username}
+                                    <Avatar name={u.username} size={18} role={u.role} />
+                                    <span>{u.username}</span>
                                 </li>
                             ))}
                         </ul>
@@ -2058,7 +2071,7 @@ for key in list(globals().keys()):
                          return (
                         <div key={userName} className="flex justify-between items-center bg-gray-50 dark:bg-slate-800 px-3 py-2.5 rounded-lg border border-gray-200 dark:border-slate-700">
                           <div className="flex items-center gap-2 cursor-pointer hover:underline" onClick={() => { if(sharedUserObj) setViewingUser(sharedUserObj); }}>
-                            <User size={16} className="text-primary-500" />
+                            <Avatar name={userName} size={20} role={sharedUserObj?.role} />
                             <span className="text-sm text-gray-700 dark:text-slate-200 font-medium">{userName}</span>
                           </div>
                           <div className="flex items-center gap-2">
