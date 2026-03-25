@@ -13,7 +13,11 @@
   <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
-    :root { --color-primary-500: #ef4444; --color-primary-600: #dc2626; --color-primary-700: #b91c1c; } /* Rouge par défaut pour l'admin */
+    :root { --color-primary-500: #ef4444; --color-primary-600: #dc2626; --color-primary-700: #b91c1c; }
+    .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+    .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+    .custom-scrollbar::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #4b5563; }
   </style>
 
   <script type="importmap">
@@ -33,9 +37,9 @@
   </div>
 
   <script type="text/babel" data-type="module">
-    import React, { useState, useEffect, useRef } from 'react';
+    import React, { useState, useEffect, useRef, useMemo } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Shield, Users, BookOpen, Trash2, Key, ArrowLeft, Database, Loader2 } from 'lucide-react';
+    import { Shield, Users, BookOpen, Trash2, Key, ArrowLeft, Database, Loader2, Search, AlertTriangle, BarChart3, Activity, Bell, Eye, Download, RefreshCw, Settings, HardDrive, Wifi, WifiOff, UserPlus, UserMinus, Edit2, X, Check, ChevronDown, Filter, Clock, FileText, Layers, Share2, Lock, Unlock, GraduationCap, Mail, MessageSquare } from 'lucide-react';
 
     const hashPassword = async (password) => {
       if (typeof crypto !== 'undefined' && crypto.subtle) {
@@ -48,11 +52,64 @@
       }
     };
 
+    const getUserColor = (uid) => {
+        if (!uid) return '#6366f1';
+        const colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#14b8a6', '#f43f5e', '#84cc16', '#6366f1'];
+        let hash = 0;
+        for(let i = 0; i < uid.length; i++) hash += uid.charCodeAt(i);
+        return colors[hash % colors.length];
+    };
+
+    const Avatar = ({ name, size = 32 }) => {
+        if (!name) return null;
+        const color = getUserColor(name);
+        const initials = name.substring(0, 2).toUpperCase();
+        return (
+            <div className="rounded-full flex items-center justify-center font-bold text-white shadow-sm flex-shrink-0" style={{ backgroundColor: color, width: size, height: size, fontSize: size * 0.4 }} title={name}>
+                {initials}
+            </div>
+        );
+    };
+
+    const formatDate = (d) => {
+        if (!d) return 'N/A';
+        try { return new Date(typeof d === 'number' ? d : d).toLocaleString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'}); } catch(e) { return 'N/A'; }
+    };
+
+    const SidebarItem = ({ icon: Icon, label, active, onClick, badge }) => (
+        <button onClick={onClick} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-sm font-medium ${active ? 'bg-red-500/20 text-red-400 shadow-sm' : 'text-gray-400 hover:bg-gray-800/50 hover:text-gray-200'}`}>
+            <Icon size={18} /> {label}
+            {badge > 0 && <span className="ml-auto bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">{badge}</span>}
+        </button>
+    );
+
+    const StatCard = ({ icon: Icon, label, value, color, sub }) => (
+        <div className="bg-white dark:bg-[#1e1e1e] p-5 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
+            <div className={`p-3.5 rounded-xl ${color}`}><Icon size={22}/></div>
+            <div className="flex-1 min-w-0">
+                <div className="text-2xl font-bold text-gray-900 dark:text-white">{value}</div>
+                <div className="text-xs text-gray-500 truncate">{label}</div>
+                {sub && <div className="text-[10px] text-gray-400 mt-0.5">{sub}</div>}
+            </div>
+        </div>
+    );
+
+
     function AdminApp() {
       const [serverData, setServerData] = useState({ users: [], notebooks: [], cells: [] });
       const [isReady, setIsReady] = useState(false);
       const [user, setUser] = useState(null);
       const socketRef = useRef(null);
+      const [activeSection, setActiveSection] = useState('dashboard');
+      const [userSearch, setUserSearch] = useState('');
+      const [nbSearch, setNbSearch] = useState('');
+      const [userRoleFilter, setUserRoleFilter] = useState('all');
+      const [nbOwnerFilter, setNbOwnerFilter] = useState('all');
+      const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+      const [editingUser, setEditingUser] = useState(null);
+      const [editForm, setEditForm] = useState({});
+      const [sidebarOpen, setSidebarOpen] = useState(false);
+      const [announceText, setAnnounceText] = useState('');
 
       useEffect(() => {
         let uid = localStorage.getItem('collab_notebook_uid');
@@ -70,14 +127,13 @@
         const checkAuth = (data) => {
              const myUser = data?.users?.find(u => u.id === uid);
              if (!myUser || myUser.role !== 'admin') {
-                 window.location.href = 'index.html'; // Redirection sécurisée avec un chemin relatif
+                 window.location.href = 'index.html';
              } else {
                  setUser(myUser);
                  setIsReady(true);
              }
         };
 
-        // Fallback local en cas d'absence d'API ou au rechargement
         const localDb = localStorage.getItem('collab_local_db');
         let hasLocalData = false;
         if (localDb) {
@@ -113,7 +169,7 @@
         setServerData(prevData => {
           const newData = mutationFn(prevData);
           if (socketRef.current) socketRef.current.emit('update_data', newData);
-          localStorage.setItem('collab_local_db', JSON.stringify(newData)); // Sécurité locale
+          localStorage.setItem('collab_local_db', JSON.stringify(newData));
           return newData; 
         });
       };
@@ -126,7 +182,7 @@
       };
 
       const handleResetPassword = async (targetUserId, username) => {
-          const newPw = prompt(`Nouveau mot de passe pour l'utilisateur "${username}" :`);
+          const newPw = prompt(`Nouveau mot de passe pour "${username}" :`);
           if (!newPw) return;
           const hashed = await hashPassword(newPw);
           updateServer(data => ({
@@ -137,7 +193,7 @@
       };
 
       const handleDeleteUser = (targetUserId, username) => {
-          if (!window.confirm(`ATTENTION : Voulez-vous vraiment supprimer définitivement "${username}" et TOUS ses notebooks ?`)) return;
+          if (!window.confirm(`ATTENTION : Supprimer définitivement "${username}" et TOUS ses notebooks ?`)) return;
           updateServer(data => {
               const userNbs = data.notebooks.filter(n => n.ownerUid === targetUserId).map(n => n.id);
               return {
@@ -158,147 +214,509 @@
           }));
       };
 
+      const handleEditUser = (u) => {
+          setEditingUser(u.id);
+          setEditForm({ username: u.username, email: u.email || '', description: u.description || '', role: u.role || 'eleve' });
+      };
+
+      const handleSaveEditUser = () => {
+          if (!editingUser) return;
+          updateServer(data => ({
+              ...data,
+              users: data.users.map(u => u.id === editingUser ? { ...u, username: editForm.username, email: editForm.email, description: editForm.description, role: editForm.role } : u)
+          }));
+          setEditingUser(null);
+      };
+
+      const handleSendAnnouncement = () => {
+          if (!announceText.trim()) return;
+          const generateUUID = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => { var r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16); });
+          updateServer(data => ({
+              ...data,
+              users: data.users.map(u => ({
+                  ...u,
+                  notifications: [{ id: generateUUID(), type: 'announcement', message: `📢 Annonce admin : ${announceText}`, timestamp: Date.now(), read: false }, ...(u.notifications || [])]
+              }))
+          }));
+          setAnnounceText('');
+          alert('Annonce envoyée à tous les utilisateurs !');
+      };
+
+      const handleExportData = () => {
+          const blob = new Blob([JSON.stringify(serverData, null, 2)], { type: 'application/json' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url; a.download = `collab_backup_${new Date().toISOString().slice(0,10)}.json`;
+          a.click(); URL.revokeObjectURL(url);
+      };
+
+      const handleClearOrphanCells = () => {
+          const nbIds = new Set(serverData.notebooks.map(n => n.id));
+          const orphans = serverData.cells.filter(c => !nbIds.has(c.notebookId));
+          if (orphans.length === 0) { alert('Aucune cellule orpheline trouvée.'); return; }
+          if (!window.confirm(`${orphans.length} cellules orphelines trouvées. Supprimer ?`)) return;
+          updateServer(data => ({ ...data, cells: data.cells.filter(c => nbIds.has(c.notebookId)) }));
+          alert(`${orphans.length} cellules supprimées.`);
+      };
+
+      const handlePurgeNotifications = () => {
+          if (!window.confirm('Purger toutes les notifications de tous les utilisateurs ?')) return;
+          updateServer(data => ({ ...data, users: data.users.map(u => ({ ...u, notifications: [] })) }));
+          alert('Notifications purgées.');
+      };
+
+      const handleRemoveAllShares = (nbId) => {
+          updateServer(data => ({ ...data, notebooks: data.notebooks.map(n => n.id === nbId ? {...n, sharedWith: [], userPermissions: {}} : n) }));
+      };
+
+      // Filtered data
+      const filteredUsers = useMemo(() => {
+          let list = serverData.users || [];
+          if (userSearch) list = list.filter(u => u.username.toLowerCase().includes(userSearch.toLowerCase()) || u.id.toLowerCase().includes(userSearch.toLowerCase()) || (u.email || '').toLowerCase().includes(userSearch.toLowerCase()));
+          if (userRoleFilter !== 'all') list = list.filter(u => (u.role || 'eleve') === userRoleFilter);
+          return list;
+      }, [serverData.users, userSearch, userRoleFilter]);
+
+      const filteredNotebooks = useMemo(() => {
+          let list = serverData.notebooks || [];
+          if (nbSearch) list = list.filter(n => n.title.toLowerCase().includes(nbSearch.toLowerCase()) || n.ownerUsername.toLowerCase().includes(nbSearch.toLowerCase()));
+          if (nbOwnerFilter !== 'all') list = list.filter(n => n.ownerUid === nbOwnerFilter);
+          return list;
+      }, [serverData.notebooks, nbSearch, nbOwnerFilter]);
+
+      // Stats
+      const totalUsers = serverData.users?.length || 0;
+      const totalNbs = serverData.notebooks?.length || 0;
+      const totalCells = serverData.cells?.length || 0;
+      const adminCount = (serverData.users || []).filter(u => u.role === 'admin').length;
+      const profCount = (serverData.users || []).filter(u => u.role === 'prof').length;
+      const eleveCount = totalUsers - adminCount - profCount;
+      const sharedNbs = (serverData.notebooks || []).filter(n => (n.sharedWith || []).length > 0).length;
+      const templateNbs = (serverData.notebooks || []).filter(n => n.accessCode).length;
+      const nbIds = new Set((serverData.notebooks || []).map(n => n.id));
+      const orphanCells = (serverData.cells || []).filter(c => !nbIds.has(c.notebookId)).length;
+      const totalNotifs = (serverData.users || []).reduce((sum, u) => sum + (u.notifications || []).length, 0);
+      const avgCellsPerNb = totalNbs > 0 ? Math.round(totalCells / totalNbs) : 0;
+
       if (!isReady) return <div className="h-screen w-screen flex items-center justify-center bg-gray-900 text-red-500"><Loader2 className="animate-spin w-8 h-8" /></div>;
 
-      const totalUsers = serverData.users.length;
-      const totalNbs = serverData.notebooks.length;
-      const totalCells = serverData.cells.length;
+      const sections = [
+          { id: 'dashboard', icon: BarChart3, label: 'Tableau de bord' },
+          { id: 'users', icon: Users, label: 'Utilisateurs', badge: totalUsers },
+          { id: 'notebooks', icon: BookOpen, label: 'Notebooks', badge: totalNbs },
+          { id: 'announcements', icon: Bell, label: 'Annonces' },
+          { id: 'maintenance', icon: Settings, label: 'Maintenance' },
+      ];
 
       return (
         <div className="flex h-screen overflow-hidden">
+            {/* MOBILE OVERLAY */}
+            {sidebarOpen && <div className="fixed inset-0 bg-black/60 z-40 md:hidden" onClick={() => setSidebarOpen(false)}></div>}
+
             {/* SIDEBAR */}
-            <div className="w-64 bg-gray-900 border-r border-gray-800 flex flex-col hidden md:flex text-gray-300">
-                <div className="p-6 flex items-center gap-3 text-red-500 font-bold text-xl border-b border-gray-800">
-                    <Shield size={28} /> Admin Panel
+            <div className={`fixed md:relative z-50 w-64 bg-gray-950 border-r border-gray-800/50 flex flex-col h-full transition-transform duration-300 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
+                <div className="p-5 flex items-center gap-3 text-red-500 font-bold text-lg border-b border-gray-800/50">
+                    <div className="p-2 bg-red-500/15 rounded-xl"><Shield size={22} /></div>
+                    <span>Admin Panel</span>
                 </div>
-                <div className="p-4 flex-1">
-                    <div className="text-xs uppercase tracking-widest text-gray-500 mb-4 font-bold">Menu</div>
-                    <a href="index.html" className="flex items-center gap-3 px-4 py-3 hover:bg-gray-800 rounded-lg transition-colors mb-2">
-                        <ArrowLeft size={18} /> Retour à l'app
-                    </a>
-                </div>
-                <div className="p-4 border-t border-gray-800 text-xs text-gray-500 flex items-center gap-2">
-                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div> Serveur Actif
+                <nav className="p-3 flex-1 space-y-1 overflow-y-auto custom-scrollbar">
+                    <div className="text-[10px] uppercase tracking-[0.2em] text-gray-600 mb-3 px-4 font-bold">Navigation</div>
+                    {sections.map(s => (
+                        <SidebarItem key={s.id} icon={s.icon} label={s.label} badge={s.badge} active={activeSection === s.id} onClick={() => { setActiveSection(s.id); setSidebarOpen(false); }} />
+                    ))}
+                    <div className="mt-6 pt-4 border-t border-gray-800/50">
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-gray-600 mb-3 px-4 font-bold">Raccourcis</div>
+                        <a href="index.html" className="w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all text-sm font-medium text-gray-400 hover:bg-gray-800/50 hover:text-gray-200">
+                            <ArrowLeft size={18} /> Retour à l'app
+                        </a>
+                    </div>
+                </nav>
+                <div className="p-4 border-t border-gray-800/50">
+                    <div className="flex items-center gap-3">
+                        <Avatar name={user?.username} size={36} />
+                        <div className="min-w-0">
+                            <div className="text-sm font-semibold text-white truncate">{user?.username}</div>
+                            <div className="text-[10px] text-red-400 font-bold uppercase tracking-wider">Administrateur</div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             {/* MAIN CONTENT */}
-            <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-[#121212] p-4 md:p-8">
-                
-                <header className="flex justify-between items-center mb-8">
-                    <h1 className="text-3xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
-                        <Shield className="text-red-500 md:hidden" /> Administration Globale
-                    </h1>
-                    <a href="index.html" className="md:hidden bg-gray-200 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-4 py-2 rounded-lg font-medium flex items-center gap-2">
-                        <ArrowLeft size={16}/> Quitter
-                    </a>
-                </header>
-
-                {/* STATS */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
-                    <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm flex items-center gap-4">
-                        <div className="p-4 bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-xl"><Users size={24}/></div>
-                        <div>
-                            <div className="text-2xl font-bold text-gray-900 dark:text-white">{totalUsers}</div>
-                            <div className="text-sm text-gray-500">Utilisateurs inscrits</div>
-                        </div>
+            <div className="flex-1 overflow-y-auto bg-gray-50 dark:bg-[#0f0f0f] custom-scrollbar">
+                {/* TOP BAR */}
+                <div className="sticky top-0 z-30 bg-white/80 dark:bg-[#161616]/80 backdrop-blur-xl border-b border-gray-200 dark:border-gray-800/50 px-4 md:px-8 py-3 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <button onClick={() => setSidebarOpen(!sidebarOpen)} className="md:hidden p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"><Layers size={20}/></button>
+                        <h1 className="text-lg font-bold text-gray-900 dark:text-white capitalize">{sections.find(s => s.id === activeSection)?.label || 'Admin'}</h1>
                     </div>
-                    <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm flex items-center gap-4">
-                        <div className="p-4 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 rounded-xl"><BookOpen size={24}/></div>
-                        <div>
-                            <div className="text-2xl font-bold text-gray-900 dark:text-white">{totalNbs}</div>
-                            <div className="text-sm text-gray-500">Notebooks créés</div>
-                        </div>
-                    </div>
-                    <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800 shadow-sm flex items-center gap-4">
-                        <div className="p-4 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded-xl"><Database size={24}/></div>
-                        <div>
-                            <div className="text-2xl font-bold text-gray-900 dark:text-white">{totalCells}</div>
-                            <div className="text-sm text-gray-500">Cellules enregistrées</div>
+                    <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400">
+                            <Wifi size={12}/> En ligne
                         </div>
                     </div>
                 </div>
 
-                {/* GESTION UTILISATEURS */}
-                <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Gestion des Utilisateurs</h2>
-                <div className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm overflow-hidden mb-10">
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse">
-                            <thead className="bg-gray-50 dark:bg-[#181818]">
-                                <tr>
-                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Pseudo</th>
-                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Rôle</th>
-                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-                                {serverData.users.map(u => (
-                                    <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-[#252525] transition-colors">
-                                        <td className="p-4">
-                                            <div className="font-medium text-gray-900 dark:text-white">{u.username}</div>
-                                            <div className="text-xs text-gray-500 font-mono mt-1">{u.id}</div>
-                                        </td>
-                                        <td className="p-4">
-                                            <select 
-                                                value={u.role || 'eleve'} 
-                                                disabled={u.id === user.id}
-                                                onChange={(e) => handleRoleChange(u.id, e.target.value)}
-                                                className={`bg-transparent border border-gray-300 dark:border-gray-700 rounded px-2 py-1 text-xs font-bold outline-none cursor-pointer
-                                                ${u.role === 'admin' ? 'text-red-500' : u.role === 'prof' ? 'text-emerald-500' : 'text-blue-500'}`}
-                                            >
-                                                <option value="eleve" className="text-gray-900">ÉLÈVE</option>
-                                                <option value="prof" className="text-gray-900">PROFESSEUR</option>
-                                                <option value="admin" className="text-gray-900">ADMIN</option>
+                <div className="p-4 md:p-8 max-w-7xl mx-auto">
+
+                {/* ============ DASHBOARD ============ */}
+                {activeSection === 'dashboard' && (
+                    <div className="space-y-8">
+                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+                            <StatCard icon={Users} label="Utilisateurs" value={totalUsers} color="bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400" />
+                            <StatCard icon={BookOpen} label="Notebooks" value={totalNbs} color="bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400" />
+                            <StatCard icon={Database} label="Cellules" value={totalCells} color="bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400" sub={`~${avgCellsPerNb}/notebook`} />
+                            <StatCard icon={Share2} label="Partagés" value={sharedNbs} color="bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400" />
+                            <StatCard icon={Bell} label="Notifications" value={totalNotifs} color="bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400" />
+                        </div>
+
+                        {/* Role distribution */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800">
+                                <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2"><Users size={16}/> Répartition des rôles</h3>
+                                <div className="space-y-3">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-2"><span className="w-3 h-3 bg-red-500 rounded-full"></span> Admin</span>
+                                        <span className="font-bold text-gray-900 dark:text-white">{adminCount}</span>
+                                    </div>
+                                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2"><div className="bg-red-500 h-2 rounded-full transition-all" style={{width: `${totalUsers > 0 ? (adminCount/totalUsers)*100 : 0}%`}}></div></div>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-2"><span className="w-3 h-3 bg-emerald-500 rounded-full"></span> Professeur</span>
+                                        <span className="font-bold text-gray-900 dark:text-white">{profCount}</span>
+                                    </div>
+                                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2"><div className="bg-emerald-500 h-2 rounded-full transition-all" style={{width: `${totalUsers > 0 ? (profCount/totalUsers)*100 : 0}%`}}></div></div>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-sm text-gray-600 dark:text-gray-300 flex items-center gap-2"><span className="w-3 h-3 bg-blue-500 rounded-full"></span> Élève</span>
+                                        <span className="font-bold text-gray-900 dark:text-white">{eleveCount}</span>
+                                    </div>
+                                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2"><div className="bg-blue-500 h-2 rounded-full transition-all" style={{width: `${totalUsers > 0 ? (eleveCount/totalUsers)*100 : 0}%`}}></div></div>
+                                </div>
+                            </div>
+                            <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800">
+                                <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2"><Activity size={16}/> Santé du système</h3>
+                                <div className="space-y-4">
+                                    <div className="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
+                                        <span className="text-sm text-gray-600 dark:text-gray-300">Notebooks avec code</span>
+                                        <span className="font-mono text-sm font-bold text-emerald-500">{templateNbs}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
+                                        <span className="text-sm text-gray-600 dark:text-gray-300">Cellules orphelines</span>
+                                        <span className={`font-mono text-sm font-bold ${orphanCells > 0 ? 'text-amber-500' : 'text-emerald-500'}`}>{orphanCells}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
+                                        <span className="text-sm text-gray-600 dark:text-gray-300">Moy. cellules/notebook</span>
+                                        <span className="font-mono text-sm font-bold text-blue-500">{avgCellsPerNb}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-800/50 rounded-xl">
+                                        <span className="text-sm text-gray-600 dark:text-gray-300">Taille estimée DB</span>
+                                        <span className="font-mono text-sm font-bold text-purple-500">{(JSON.stringify(serverData).length / 1024).toFixed(1)} KB</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Recent users */}
+                        <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800">
+                            <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2"><Clock size={16}/> Derniers utilisateurs inscrits</h3>
+                            <div className="flex flex-wrap gap-3">
+                                {(serverData.users || []).slice(-8).reverse().map(u => (
+                                    <div key={u.id} className="flex items-center gap-2 bg-gray-50 dark:bg-gray-800/50 px-3 py-2 rounded-xl">
+                                        <Avatar name={u.username} size={28} />
+                                        <div>
+                                           <div className="text-sm font-medium text-gray-900 dark:text-white">{u.username}</div>
+                                           <div className={`text-[10px] font-bold uppercase ${u.role === 'admin' ? 'text-red-500' : u.role === 'prof' ? 'text-emerald-500' : 'text-blue-500'}`}>{u.role || 'eleve'}</div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* ============ USERS ============ */}
+                {activeSection === 'users' && (
+                    <div className="space-y-6">
+                        {/* Search & Filters */}
+                        <div className="flex flex-col sm:flex-row gap-3">
+                            <div className="relative flex-1">
+                                <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                                <input type="text" placeholder="Rechercher par pseudo, email ou ID..." value={userSearch} onChange={e => setUserSearch(e.target.value)} className="w-full bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-xl pl-10 pr-4 py-3 text-sm focus:outline-none focus:border-red-500 text-gray-900 dark:text-white transition-colors" />
+                            </div>
+                            <select value={userRoleFilter} onChange={e => setUserRoleFilter(e.target.value)} className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-red-500 text-gray-900 dark:text-white cursor-pointer">
+                                <option value="all">Tous les rôles</option>
+                                <option value="admin">Admin</option>
+                                <option value="prof">Professeur</option>
+                                <option value="eleve">Élève</option>
+                            </select>
+                        </div>
+
+                        <div className="text-xs text-gray-500">{filteredUsers.length} utilisateur(s) trouvé(s)</div>
+
+                        {/* Edit User Modal */}
+                        {editingUser && (
+                            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[99999] p-4">
+                                <div className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-700 p-6 rounded-2xl w-full max-w-md shadow-2xl relative">
+                                    <button onClick={() => setEditingUser(null)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900 dark:hover:text-white"><X size={20}/></button>
+                                    <h2 className="text-lg font-bold text-gray-900 dark:text-white mb-4">Modifier l'utilisateur</h2>
+                                    <div className="space-y-3">
+                                        <div>
+                                            <label className="block text-xs text-gray-500 mb-1">Pseudo</label>
+                                            <input type="text" value={editForm.username} onChange={e => setEditForm({...editForm, username: e.target.value})} className="w-full bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-white outline-none focus:border-red-500" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs text-gray-500 mb-1">Email</label>
+                                            <input type="email" value={editForm.email} onChange={e => setEditForm({...editForm, email: e.target.value})} className="w-full bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-white outline-none focus:border-red-500" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs text-gray-500 mb-1">Description</label>
+                                            <textarea value={editForm.description} onChange={e => setEditForm({...editForm, description: e.target.value})} className="w-full bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-white outline-none focus:border-red-500 h-20 resize-none"></textarea>
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs text-gray-500 mb-1">Rôle</label>
+                                            <select value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})} className="w-full bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-lg px-3 py-2 text-sm text-gray-900 dark:text-white outline-none focus:border-red-500 cursor-pointer">
+                                                <option value="eleve">Élève</option>
+                                                <option value="prof">Professeur</option>
+                                                <option value="admin">Admin</option>
                                             </select>
-                                        </td>
-                                        <td className="p-4 flex justify-end gap-2">
-                                            <button onClick={() => handleResetPassword(u.id, u.username)} className="bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50 p-2 rounded-lg transition-colors" title="Réinitialiser MDP"><Key size={16} /></button>
-                                            <button onClick={() => handleDeleteUser(u.id, u.username)} disabled={u.id === user.id} className="bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 disabled:opacity-30 p-2 rounded-lg transition-colors" title="Supprimer l'utilisateur"><Trash2 size={16} /></button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+                                        </div>
+                                    </div>
+                                    <button onClick={handleSaveEditUser} className="w-full mt-4 bg-red-500 hover:bg-red-600 text-white py-2.5 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"><Check size={16}/> Enregistrer</button>
+                                </div>
+                            </div>
+                        )}
 
-                {/* GESTION NOTEBOOKS */}
-                <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Tous les Notebooks</h2>
-                <div className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm overflow-hidden">
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left border-collapse">
-                            <thead className="bg-gray-50 dark:bg-[#181818]">
-                                <tr>
-                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Titre</th>
-                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Propriétaire</th>
-                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Code / Source</th>
-                                    <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-                                {serverData.notebooks.map(nb => (
-                                    <tr key={nb.id} className="hover:bg-gray-50 dark:hover:bg-[#252525] transition-colors">
-                                        <td className="p-4">
-                                            <div className="font-medium text-gray-900 dark:text-white flex items-center gap-2">
-                                                <BookOpen size={14} className="text-gray-400"/> {nb.title}
-                                            </div>
-                                        </td>
-                                        <td className="p-4 text-sm text-gray-600 dark:text-gray-300">{nb.ownerUsername}</td>
-                                        <td className="p-4">
-                                            {nb.accessCode && <span className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 px-2 py-1 rounded text-xs font-mono">Code: {nb.accessCode}</span>}
-                                            {nb.templateSourceId && <span className="text-xs text-blue-500 bg-blue-100 dark:bg-blue-900/30 px-2 py-1 rounded ml-1">Copie d'exercice</span>}
-                                        </td>
-                                        <td className="p-4 flex justify-end gap-2">
-                                            <button onClick={() => { localStorage.setItem('collab_open_nb', nb.id); window.location.href='index.html'; }} className="text-sm bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 px-3 py-1.5 rounded transition-colors text-gray-800 dark:text-white font-medium">Ouvrir</button>
-                                            <button onClick={() => handleDeleteNotebook(nb.id, nb.title)} className="bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 p-1.5 rounded transition-colors" title="Supprimer ce notebook"><Trash2 size={16} /></button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                        {/* Users Table */}
+                        <div className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm overflow-hidden">
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left border-collapse">
+                                    <thead className="bg-gray-50 dark:bg-[#181818]">
+                                        <tr>
+                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Utilisateur</th>
+                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider hidden md:table-cell">Contact</th>
+                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Rôle</th>
+                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell">Notebooks</th>
+                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                                        {filteredUsers.map(u => {
+                                            const userNbCount = (serverData.notebooks || []).filter(n => n.ownerUid === u.id).length;
+                                            return (
+                                            <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-[#252525] transition-colors group">
+                                                <td className="p-4">
+                                                    <div className="flex items-center gap-3">
+                                                        <Avatar name={u.username} size={36} />
+                                                        <div>
+                                                            <div className="font-medium text-gray-900 dark:text-white">{u.username}</div>
+                                                            <div className="text-[10px] text-gray-400 font-mono">{u.id.slice(0,8)}...</div>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <td className="p-4 hidden md:table-cell">
+                                                    <div className="text-sm text-gray-500">{u.email || <span className="italic text-gray-400">Non renseigné</span>}</div>
+                                                </td>
+                                                <td className="p-4">
+                                                    <select 
+                                                        value={u.role || 'eleve'} 
+                                                        disabled={u.id === user.id}
+                                                        onChange={(e) => handleRoleChange(u.id, e.target.value)}
+                                                        className={`bg-transparent border border-gray-300 dark:border-gray-700 rounded-lg px-2 py-1.5 text-xs font-bold outline-none cursor-pointer transition-colors
+                                                        ${u.role === 'admin' ? 'text-red-500 bg-red-50 dark:bg-red-900/20' : u.role === 'prof' ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'text-blue-500 bg-blue-50 dark:bg-blue-900/20'}`}
+                                                    >
+                                                        <option value="eleve" className="text-gray-900">ÉLÈVE</option>
+                                                        <option value="prof" className="text-gray-900">PROFESSEUR</option>
+                                                        <option value="admin" className="text-gray-900">ADMIN</option>
+                                                    </select>
+                                                </td>
+                                                <td className="p-4 hidden sm:table-cell">
+                                                    <span className="bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 px-2.5 py-1 rounded-lg text-xs font-medium">{userNbCount} notebook{userNbCount !== 1 ? 's' : ''}</span>
+                                                </td>
+                                                <td className="p-4">
+                                                    <div className="flex justify-end gap-1.5">
+                                                        <button onClick={() => handleEditUser(u)} className="bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:hover:bg-blue-900/50 p-2 rounded-lg transition-colors" title="Modifier"><Edit2 size={14} /></button>
+                                                        <button onClick={() => handleResetPassword(u.id, u.username)} className="bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50 p-2 rounded-lg transition-colors" title="Réinitialiser MDP"><Key size={14} /></button>
+                                                        <button onClick={() => handleDeleteUser(u.id, u.username)} disabled={u.id === user.id} className="bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 disabled:opacity-30 p-2 rounded-lg transition-colors" title="Supprimer"><Trash2 size={14} /></button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        )})}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
                     </div>
-                </div>
+                )}
 
+                {/* ============ NOTEBOOKS ============ */}
+                {activeSection === 'notebooks' && (
+                    <div className="space-y-6">
+                        <div className="flex flex-col sm:flex-row gap-3">
+                            <div className="relative flex-1">
+                                <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                                <input type="text" placeholder="Rechercher par titre ou propriétaire..." value={nbSearch} onChange={e => setNbSearch(e.target.value)} className="w-full bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-xl pl-10 pr-4 py-3 text-sm focus:outline-none focus:border-red-500 text-gray-900 dark:text-white transition-colors" />
+                            </div>
+                            <select value={nbOwnerFilter} onChange={e => setNbOwnerFilter(e.target.value)} className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-red-500 text-gray-900 dark:text-white cursor-pointer">
+                                <option value="all">Tous les propriétaires</option>
+                                {(serverData.users || []).map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+                            </select>
+                        </div>
+
+                        <div className="text-xs text-gray-500">{filteredNotebooks.length} notebook(s) trouvé(s)</div>
+
+                        <div className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm overflow-hidden">
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left border-collapse">
+                                    <thead className="bg-gray-50 dark:bg-[#181818]">
+                                        <tr>
+                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Titre</th>
+                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Propriétaire</th>
+                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider hidden md:table-cell">Cellules</th>
+                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider hidden md:table-cell">Partagé</th>
+                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider hidden lg:table-cell">Code / Tags</th>
+                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider text-right">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                                        {filteredNotebooks.map(nb => {
+                                            const nbCellCount = (serverData.cells || []).filter(c => c.notebookId === nb.id).length;
+                                            const shareCount = (nb.sharedWith || []).length;
+                                            return (
+                                            <tr key={nb.id} className="hover:bg-gray-50 dark:hover:bg-[#252525] transition-colors">
+                                                <td className="p-4">
+                                                    <div className="font-medium text-gray-900 dark:text-white flex items-center gap-2">
+                                                        <BookOpen size={14} className="text-gray-400 flex-shrink-0"/> <span className="truncate max-w-[200px]">{nb.title}</span>
+                                                    </div>
+                                                    <div className="text-[10px] text-gray-400 font-mono mt-0.5">{nb.id.slice(0,8)}...</div>
+                                                </td>
+                                                <td className="p-4">
+                                                    <div className="flex items-center gap-2">
+                                                        <Avatar name={nb.ownerUsername} size={24} />
+                                                        <span className="text-sm text-gray-600 dark:text-gray-300">{nb.ownerUsername}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="p-4 hidden md:table-cell">
+                                                    <span className="bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 px-2 py-1 rounded text-xs font-medium">{nbCellCount}</span>
+                                                </td>
+                                                <td className="p-4 hidden md:table-cell">
+                                                    {shareCount > 0 ? (
+                                                        <span className="bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 px-2 py-1 rounded text-xs font-medium">{shareCount} pers.</span>
+                                                    ) : (
+                                                        <span className="text-xs text-gray-400">—</span>
+                                                    )}
+                                                </td>
+                                                <td className="p-4 hidden lg:table-cell">
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {nb.accessCode && <span className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 px-2 py-0.5 rounded text-[10px] font-mono">{nb.accessCode}</span>}
+                                                        {nb.templateSourceId && <span className="text-[10px] text-blue-500 bg-blue-100 dark:bg-blue-900/30 px-2 py-0.5 rounded">Copie</span>}
+                                                        {(nb.pinnedBy || []).length > 0 && <span className="text-[10px] text-amber-500 bg-amber-100 dark:bg-amber-900/30 px-2 py-0.5 rounded">📌 {nb.pinnedBy.length}</span>}
+                                                    </div>
+                                                </td>
+                                                <td className="p-4">
+                                                    <div className="flex justify-end gap-1.5">
+                                                        <button onClick={() => { localStorage.setItem('collab_open_nb', nb.id); window.location.href='index.html'; }} className="text-xs bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 px-3 py-1.5 rounded-lg transition-colors text-gray-800 dark:text-white font-medium" title="Ouvrir"><Eye size={14}/></button>
+                                                        {shareCount > 0 && <button onClick={() => handleRemoveAllShares(nb.id)} className="bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-400 dark:hover:bg-purple-900/50 p-1.5 rounded-lg transition-colors" title="Supprimer tous les partages"><UserMinus size={14}/></button>}
+                                                        <button onClick={() => handleDeleteNotebook(nb.id, nb.title)} className="bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50 p-1.5 rounded-lg transition-colors" title="Supprimer"><Trash2 size={14} /></button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        )})}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* ============ ANNOUNCEMENTS ============ */}
+                {activeSection === 'announcements' && (
+                    <div className="space-y-6">
+                        <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800">
+                            <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2"><Bell size={16}/> Envoyer une annonce globale</h3>
+                            <p className="text-xs text-gray-500 mb-4">Ce message sera envoyé comme notification à <strong>tous</strong> les utilisateurs inscrits.</p>
+                            <textarea value={announceText} onChange={e => setAnnounceText(e.target.value)} placeholder="Écrivez votre annonce ici..." className="w-full bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-700 rounded-xl px-4 py-3 text-sm text-gray-900 dark:text-white outline-none focus:border-red-500 h-28 resize-none transition-colors mb-4"></textarea>
+                            <button onClick={handleSendAnnouncement} disabled={!announceText.trim()} className="bg-red-500 hover:bg-red-600 disabled:opacity-40 text-white px-6 py-2.5 rounded-xl font-medium transition-colors flex items-center gap-2"><Bell size={16}/> Envoyer à {totalUsers} utilisateur(s)</button>
+                        </div>
+
+                        <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800">
+                            <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2"><MessageSquare size={16}/> Statistiques</h3>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-xl text-center">
+                                    <div className="text-2xl font-bold text-gray-900 dark:text-white">{totalNotifs}</div>
+                                    <div className="text-xs text-gray-500">Total notifications</div>
+                                </div>
+                                <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-xl text-center">
+                                    <div className="text-2xl font-bold text-gray-900 dark:text-white">{(serverData.users || []).reduce((s, u) => s + (u.notifications || []).filter(n => !n.read).length, 0)}</div>
+                                    <div className="text-xs text-gray-500">Non lues</div>
+                                </div>
+                                <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-xl text-center">
+                                    <div className="text-2xl font-bold text-gray-900 dark:text-white">{(serverData.users || []).filter(u => (u.notifications || []).length > 0).length}</div>
+                                    <div className="text-xs text-gray-500">Utilisateurs notifiés</div>
+                                </div>
+                                <div className="bg-gray-50 dark:bg-gray-800/50 p-4 rounded-xl text-center">
+                                    <div className="text-2xl font-bold text-gray-900 dark:text-white">{totalUsers > 0 ? (totalNotifs / totalUsers).toFixed(1) : 0}</div>
+                                    <div className="text-xs text-gray-500">Moy./utilisateur</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* ============ MAINTENANCE ============ */}
+                {activeSection === 'maintenance' && (
+                    <div className="space-y-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800">
+                                <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-2 flex items-center gap-2"><Download size={16}/> Sauvegarder les données</h3>
+                                <p className="text-xs text-gray-500 mb-4">Télécharger un fichier JSON complet de la base de données.</p>
+                                <button onClick={handleExportData} className="bg-blue-500 hover:bg-blue-600 text-white px-5 py-2.5 rounded-xl font-medium transition-colors flex items-center gap-2 w-full justify-center"><Download size={16}/> Exporter JSON ({(JSON.stringify(serverData).length / 1024).toFixed(1)} KB)</button>
+                            </div>
+
+                            <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800">
+                                <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-2 flex items-center gap-2"><RefreshCw size={16}/> Nettoyer les cellules orphelines</h3>
+                                <p className="text-xs text-gray-500 mb-4">Supprimer les cellules dont le notebook parent n'existe plus.</p>
+                                <button onClick={handleClearOrphanCells} className={`${orphanCells > 0 ? 'bg-amber-500 hover:bg-amber-600' : 'bg-gray-400'} text-white px-5 py-2.5 rounded-xl font-medium transition-colors flex items-center gap-2 w-full justify-center`}><RefreshCw size={16}/> {orphanCells} cellule(s) orpheline(s)</button>
+                            </div>
+
+                            <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800">
+                                <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-2 flex items-center gap-2"><Bell size={16}/> Purger les notifications</h3>
+                                <p className="text-xs text-gray-500 mb-4">Supprimer toutes les notifications de tous les utilisateurs.</p>
+                                <button onClick={handlePurgeNotifications} className="bg-rose-500 hover:bg-rose-600 text-white px-5 py-2.5 rounded-xl font-medium transition-colors flex items-center gap-2 w-full justify-center"><Trash2 size={16}/> Purger {totalNotifs} notification(s)</button>
+                            </div>
+
+                            <div className="bg-white dark:bg-[#1e1e1e] p-6 rounded-2xl border border-gray-200 dark:border-gray-800">
+                                <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-2 flex items-center gap-2"><HardDrive size={16}/> Info Système</h3>
+                                <div className="space-y-2 text-sm">
+                                    <div className="flex justify-between"><span className="text-gray-500">Taille DB</span><span className="font-mono text-gray-900 dark:text-white">{(JSON.stringify(serverData).length / 1024).toFixed(2)} KB</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-500">Utilisateurs</span><span className="font-mono text-gray-900 dark:text-white">{totalUsers}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-500">Notebooks</span><span className="font-mono text-gray-900 dark:text-white">{totalNbs}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-500">Cellules</span><span className="font-mono text-gray-900 dark:text-white">{totalCells}</span></div>
+                                    <div className="flex justify-between"><span className="text-gray-500">Socket.io</span><span className={`font-mono ${socketRef.current ? 'text-emerald-500' : 'text-red-500'}`}>{socketRef.current ? 'Connecté' : 'Déconnecté'}</span></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-900/30 p-6 rounded-2xl">
+                            <h3 className="text-sm font-bold text-red-600 dark:text-red-400 mb-2 flex items-center gap-2"><AlertTriangle size={16}/> Zone danger</h3>
+                            <p className="text-xs text-red-500/80 mb-4">Ces actions sont irréversibles. Procédez avec précaution.</p>
+                            <div className="flex flex-wrap gap-3">
+                                <button onClick={() => {
+                                    if (!window.confirm('ATTENTION : Supprimer TOUS les notebooks et cellules ? Les comptes utilisateurs seront conservés.')) return;
+                                    updateServer(data => ({ ...data, notebooks: [], cells: [] }));
+                                    alert('Tous les notebooks et cellules ont été supprimés.');
+                                }} className="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-2"><Trash2 size={14}/> Supprimer tous les notebooks</button>
+                                <button onClick={() => {
+                                    if (!window.confirm('ATTENTION : Réinitialiser TOUTES les données (utilisateurs, notebooks, cellules) ?')) return;
+                                    if (!window.confirm('DERNIÈRE CHANCE : Êtes-vous ABSOLUMENT sûr ? Cette action est IRRÉVERSIBLE !')) return;
+                                    updateServer(() => ({ users: [], notebooks: [], cells: [] }));
+                                    localStorage.removeItem('collab_notebook_uid');
+                                    window.location.href = 'index.html';
+                                }} className="bg-red-700 hover:bg-red-800 text-white px-4 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-2"><AlertTriangle size={14}/> Réinitialisation complète</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                </div>
             </div>
         </div>
       );
