@@ -71,8 +71,46 @@ app.get('/api/data', (req, res) => {
 });
 
 // --- GESTION DU TEMPS RÉEL ---
+// Dictionary to track active users per notebook: { notebookId: [ { userId, username, color }, ... ] }
+const activeNotebookUsers = {};
+
 io.on('connection', (socket) => {
     console.log('Nouvel utilisateur connecté:', socket.id);
+
+    // Join a notebook room
+    socket.on('join_notebook', ({ notebookId, user }) => {
+        if (socket.currentNotebook) {
+            socket.leave(socket.currentNotebook);
+            if (activeNotebookUsers[socket.currentNotebook]) {
+                activeNotebookUsers[socket.currentNotebook] = activeNotebookUsers[socket.currentNotebook].filter(u => u.userId !== socket.userId);
+                io.to(socket.currentNotebook).emit('active_users_update', activeNotebookUsers[socket.currentNotebook]);
+            }
+        }
+        
+        socket.currentNotebook = notebookId;
+        socket.userId = user.uid;
+        socket.userObj = { userId: user.uid, username: user.username, color: user.color || '#6366f1' };
+        
+        socket.join(notebookId);
+        
+        if (!activeNotebookUsers[notebookId]) activeNotebookUsers[notebookId] = [];
+        // Remove if already exists to avoid duplicates
+        activeNotebookUsers[notebookId] = activeNotebookUsers[notebookId].filter(u => u.userId !== user.uid);
+        activeNotebookUsers[notebookId].push(socket.userObj);
+        
+        io.to(notebookId).emit('active_users_update', activeNotebookUsers[notebookId]);
+    });
+
+    socket.on('leave_notebook', () => {
+        if (socket.currentNotebook) {
+            socket.leave(socket.currentNotebook);
+            if (activeNotebookUsers[socket.currentNotebook]) {
+                activeNotebookUsers[socket.currentNotebook] = activeNotebookUsers[socket.currentNotebook].filter(u => u.userId !== socket.userId);
+                io.to(socket.currentNotebook).emit('active_users_update', activeNotebookUsers[socket.currentNotebook]);
+            }
+            socket.currentNotebook = null;
+        }
+    });
 
     // SYNCHRONISATION GLOBALE (Pour les gros changements: undo/redo, import de fichier)
     socket.on('update_data', async (newData) => {
@@ -159,6 +197,8 @@ io.on('connection', (socket) => {
         }
         
         // On relaie l'action aux autres
+        // If it's a notebook specific action, we could broadcast only to the room, but for now we broadcast globally 
+        // as per original design, or to the specific notebook room if we want to optimize. 
         socket.broadcast.emit('action_received', action);
     });
 
@@ -169,7 +209,11 @@ io.on('connection', (socket) => {
         if (cell) cell.code = code; // Met à jour l'état serveur
         
         // Relaie les frappes chirurgicales
-        socket.broadcast.emit('remote_cell_edits', { cellId, code, changes });
+        if (socket.currentNotebook) {
+            socket.to(socket.currentNotebook).emit('remote_cell_edits', { cellId, code, changes });
+        } else {
+            socket.broadcast.emit('remote_cell_edits', { cellId, code, changes });
+        }
         
         // Sauvegarde granulaire de LA cellule uniquement
         if (dbCells) {
@@ -183,11 +227,21 @@ io.on('connection', (socket) => {
 
     // Relais ultra-rapide pour les curseurs multijoueurs
     socket.on('cursor_moved', (cursorData) => {
-        socket.broadcast.emit('cursor_updated', cursorData);
+        if (socket.currentNotebook) {
+            socket.to(socket.currentNotebook).emit('cursor_updated', cursorData);
+        } else {
+            socket.broadcast.emit('cursor_updated', cursorData);
+        }
     });
 
     socket.on('disconnect', () => {
         console.log('Utilisateur déconnecté:', socket.id);
+        if (socket.currentNotebook) {
+            if (activeNotebookUsers[socket.currentNotebook]) {
+                activeNotebookUsers[socket.currentNotebook] = activeNotebookUsers[socket.currentNotebook].filter(u => u.userId !== socket.userId);
+                io.to(socket.currentNotebook).emit('active_users_update', activeNotebookUsers[socket.currentNotebook]);
+            }
+        }
     });
 });
 
