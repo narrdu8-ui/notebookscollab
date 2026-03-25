@@ -836,6 +836,19 @@ except Exception:
           if (socketRef.current) socketRef.current.emit('action', action); 
       };
 
+      const emitLog = (action, details) => {
+          if (!socketRef.current || !user) return;
+          const uData = (serverData.users || []).find(u => u.id === user.uid);
+          socketRef.current.emit('add_log', {
+              id: generateUUID(),
+              userId: user.uid,
+              username: uData?.username || 'Inconnu',
+              action,
+              details,
+              timestamp: Date.now()
+          });
+      };
+
       const updateServerFullSync = (mutationFn) => {
         setServerData(prevData => {
           const newData = mutationFn(prevData);
@@ -1042,15 +1055,18 @@ except Exception:
           });
           localStorage.setItem('collab_notebook_uid', newUid);
           setUser({ uid: newUid });
+          setTimeout(() => { if (socketRef.current) socketRef.current.emit('add_log', { id: generateUUID(), userId: newUid, username: trimmedUsername, action: 'REGISTER', details: `Inscription de "${trimmedUsername}"`, timestamp: Date.now() }); }, 200);
         } else {
           const existingUser = (serverData.users || []).find(u => u.username.toLowerCase() === trimmedUsername.toLowerCase());
           if (!existingUser || existingUser.password !== hashed) { alert("Identifiants incorrects !"); return; }
           localStorage.setItem('collab_notebook_uid', existingUser.id);
           setUser({ uid: existingUser.id });
+          setTimeout(() => { if (socketRef.current) socketRef.current.emit('add_log', { id: generateUUID(), userId: existingUser.id, username: existingUser.username, action: 'LOGIN', details: `Connexion de "${existingUser.username}"`, timestamp: Date.now() }); }, 200);
         }
       };
 
       const handleLogout = () => {
+        emitLog('LOGOUT', `Déconnexion`);
         localStorage.removeItem('collab_notebook_uid');
         setUser(null); setCurrentNbId(null); setSelectedCellId(null);
         setInputUsername(''); setInputPassword(''); setInputPasswordConfirm('');
@@ -1105,6 +1121,7 @@ except Exception:
         });
         setCurrentNbId(newNbId);
         setHistoryPast([]); setHistoryFuture([]); setSelectedCellId(null);
+        emitLog('CREATE_NOTEBOOK', `Création du notebook "${title}"`);
       };
 
       const handleJoinByCode = (e) => {
@@ -1253,7 +1270,9 @@ except Exception:
       const handleDeleteNotebook = (e, nbId) => {
         if (e) { e.preventDefault(); e.stopPropagation(); }
         if (window.confirm("Êtes-vous sûr de vouloir supprimer définitivement ce notebook ?")) {
+          const nbTitle = (serverData.notebooks || []).find(n => n.id === nbId)?.title || nbId;
           dispatchServerAction({ type: 'DELETE_NOTEBOOK', payload: { notebookId: nbId } });
+          emitLog('DELETE_NOTEBOOK', `Suppression du notebook "${nbTitle}"`);
           if (currentNbId === nbId) { setCurrentNbId(null); setSelectedCellId(null); setHistoryPast([]); setHistoryFuture([]); }
         }
       };
@@ -1269,6 +1288,7 @@ except Exception:
             const newPermissions = { ...(activeNotebook.userPermissions || {}) };
             newPermissions[targetUser.username] = 'viewer';
             dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { sharedWith: [...activeNotebook.sharedWith, targetUser.username], userPermissions: newPermissions } } });
+            emitLog('SHARE_NOTEBOOK', `Partage de "${activeNotebook.title}" avec ${targetUser.username}`);
             
             const myName = (serverData.users || []).find(u => u.id === user.uid)?.username || 'Quelqu\'un';
             const notif = { id: generateUUID(), type: 'info', message: `${myName} vous a ajouté(e) au notebook "${activeNotebook.title}".`, timestamp: Date.now(), read: false };
@@ -1284,6 +1304,7 @@ except Exception:
             const newPermissions = { ...(activeNotebook.userPermissions || {}) };
             newPermissions[usernameToChange] = newRole;
             dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { userPermissions: newPermissions } } });
+            emitLog('CHANGE_PERMISSION', `Permissions de ${usernameToChange} sur "${activeNotebook.title}" -> ${newRole}`);
 
             const targetUser = (serverData.users || []).find(u => u.username === usernameToChange);
             if (targetUser) {
