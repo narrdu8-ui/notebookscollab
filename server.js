@@ -12,9 +12,10 @@ const io = new Server(server, { cors: { origin: '*' } });
 const MONGO_URI = process.env.MONGO_URI; 
 const DB_NAME = "collab_db";
 
-let db, dbUsers, dbNotebooks, dbCells;
+let db, dbUsers, dbNotebooks, dbCells, dbLogs;
 // Données par défaut si la base est vide
 let globalData = { users: [], notebooks: [], cells: [] };
+let logsData = [];
 
 app.use(express.static(__dirname));
 
@@ -34,6 +35,7 @@ async function initDB() {
         dbUsers = db.collection('users');
         dbNotebooks = db.collection('notebooks');
         dbCells = db.collection('cells');
+        dbLogs = db.collection('logs');
 
         // --- Migration automatique (si ancienne structure app_data existe) ---
         const oldDataColl = db.collection('app_data');
@@ -59,6 +61,14 @@ async function initDB() {
             cells: cells || []
         };
         console.log(`✅ Données chargées : ${globalData.users.length} users, ${globalData.notebooks.length} notebooks, ${globalData.cells.length} cellules.`);
+
+        // Charger les logs et auto-purger ceux de + de 14 jours
+        const twoWeeksAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
+        if (dbLogs) {
+            await dbLogs.deleteMany({ timestamp: { $lt: twoWeeksAgo } });
+            logsData = await dbLogs.find().project({ _id: 0 }).sort({ timestamp: -1 }).toArray();
+            console.log(`✅ Logs chargés : ${logsData.length} entrées (purge auto > 14j effectuée).`);
+        }
     } catch (err) {
         console.error("❌ Erreur de connexion MongoDB :", err);
     }
@@ -69,6 +79,19 @@ initDB();
 app.get('/api/data', (req, res) => {
     res.json(globalData);
 });
+
+app.get('/api/logs', (req, res) => {
+    res.json(logsData);
+});
+
+// --- AUTO-PURGE DES LOGS TOUTES LES 6 HEURES ---
+setInterval(async () => {
+    const twoWeeksAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
+    logsData = logsData.filter(l => l.timestamp >= twoWeeksAgo);
+    if (dbLogs) {
+        try { await dbLogs.deleteMany({ timestamp: { $lt: twoWeeksAgo } }); } catch(e) {}
+    }
+}, 6 * 60 * 60 * 1000);
 
 // --- GESTION DU TEMPS RÉEL ---
 // Dictionary to track active users per notebook: { notebookId: [ { userId, username, color }, ... ] }
@@ -249,6 +272,31 @@ io.on('connection', (socket) => {
                 io.to(socket.currentNotebook).emit('active_users_update', activeNotebookUsers[socket.currentNotebook]);
             }
         }
+    });
+
+    // --- LOGS ---
+    socket.on('add_log', async (logEntry) => {
+        logsData.unshift(logEntry);
+        // Purge en mémoire si > 14 jours
+        const twoWeeksAgo = Date.now() - (14 * 24 * 60 * 60 * 1000);
+        logsData = logsData.filter(l => l.timestamp >= twoWeeksAgo);
+        if (dbLogs) {
+            try { await dbLogs.insertOne({ ...logEntry }); } catch(e) { console.error('Erreur log DB:', e); }
+        }
+        io.emit('logs_updated', logsData);
+    });
+
+    socket.on('clear_logs', async () => {
+        logsData = [];
+        if (dbLogs) { try { await dbLogs.deleteMany({}); } catch(e) {} }
+        io.emit('logs_updated', logsData);
+    });
+
+    socket.on('purge_logs_older_than', async ({ days }) => {
+        const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
+        logsData = logsData.filter(l => l.timestamp >= cutoff);
+        if (dbLogs) { try { await dbLogs.deleteMany({ timestamp: { $lt: cutoff } }); } catch(e) {} }
+        io.emit('logs_updated', logsData);
     });
 });
 
