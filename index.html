@@ -1673,11 +1673,11 @@ for key in list(globals().keys()):
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {sharedFilteredNotebooks.map(nb => {
                          const owner = serverData.users.find(u => u.id === nb.ownerUid);
-                         const isSuperAdmin = userData?.role === 'admin';
+                         const isPrivileged = userData?.role === 'admin';
                          return (
                           <div key={nb.id} onClick={() => openNotebook(nb.id)} className="bg-white dark:bg-slate-900 border border-primary-100 dark:border-primary-900/50 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 relative overflow-hidden shadow-sm flex flex-col justify-between">
                             <div className="absolute top-0 left-0 w-1 h-full bg-primary-500 z-20"></div>
-                            {isSuperAdmin && (
+                            {isPrivileged && (
                                 <div className="absolute top-4 left-4 z-20">
                                     <input type="checkbox" checked={selectedNotebooks.has(nb.id)} onChange={(e) => handleToggleSelectNotebook(e, nb.id)} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded text-primary-600 cursor-pointer" />
                                 </div>
