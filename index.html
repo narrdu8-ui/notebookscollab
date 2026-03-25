@@ -1870,19 +1870,23 @@ for key in list(globals().keys()):
                     </div>
                  )}
 
-                 <div className="flex flex-shrink-0 items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 ml-2">
-                   <button onClick={() => handleMoveCell(selectedCell.id, 'up')} disabled={(isSelectedCellFirst || selectedCell.locked) && !hasAdminRights} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-l hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Monter"><ArrowUp size={14} /></button>
-                   <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
-                   <button onClick={() => handleMoveCell(selectedCell.id, 'down')} disabled={(isSelectedCellLast || selectedCell.locked) && !hasAdminRights} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Descendre"><ArrowDown size={14} /></button>
-                 </div>
+                 {!isViewer && (
+                   <div className="flex flex-shrink-0 items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 ml-2">
+                     <button onClick={() => handleMoveCell(selectedCell.id, 'up')} disabled={(isSelectedCellFirst || selectedCell.locked) && !hasAdminRights} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-l hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Monter"><ArrowUp size={14} /></button>
+                     <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
+                     <button onClick={() => handleMoveCell(selectedCell.id, 'down')} disabled={(isSelectedCellLast || selectedCell.locked) && !hasAdminRights} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Descendre"><ArrowDown size={14} /></button>
+                   </div>
+                 )}
 
-                 <div className="flex flex-shrink-0 items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 ml-2">
-                   <button onClick={handleCopyCell} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white rounded-l hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Copier la cellule"><CopyIcon size={14} /></button>
-                   <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
-                   <button onClick={handleCutCell} disabled={selectedCell.locked && !canUnlockCellsNotebook && !hasAdminRights} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Couper la cellule"><Scissors size={14} /></button>
-                   <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
-                   <button onClick={handlePasteCell} disabled={!clipboardCell || (!canCreateCellsNotebook && !hasAdminRights)} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Coller la cellule"><ClipboardPaste size={14} /></button>
-                 </div>
+                 {!isViewer && (
+                   <div className="flex flex-shrink-0 items-center bg-white dark:bg-[#2d2d2d] rounded border border-gray-300 dark:border-slate-700 ml-2">
+                     <button onClick={handleCopyCell} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white rounded-l hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Copier la cellule"><CopyIcon size={14} /></button>
+                     <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
+                     <button onClick={handleCutCell} disabled={selectedCell.locked && !canUnlockCellsNotebook && !hasAdminRights} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Couper la cellule"><Scissors size={14} /></button>
+                     <div className="w-px h-4 bg-gray-200 dark:bg-slate-600"></div>
+                     <button onClick={handlePasteCell} disabled={!clipboardCell || (!canCreateCellsNotebook && !hasAdminRights)} className="p-1 sm:p-1.5 text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white disabled:opacity-30 rounded-r hover:bg-gray-100 dark:hover:bg-[#3c3c3c] transition-colors" title="Coller la cellule"><ClipboardPaste size={14} /></button>
+                   </div>
+                 )}
 
                  <div className="flex flex-shrink-0 items-center gap-2 ml-auto">
                    {(canUnlockCellsNotebook || hasAdminRights) && (activeNotebook?.ownerUid === user?.uid || hasAdminRights) && (
@@ -1890,7 +1894,7 @@ for key in list(globals().keys()):
                        {selectedCell.locked ? <Lock size={14} /> : <Unlock size={14} />} <span className="hidden sm:inline">{selectedCell.locked ? 'Verrouillé' : 'Libre'}</span>
                      </button>
                    )}
-                   {selectedCell.type === 'code' && (
+                   {!isViewer && selectedCell.type === 'code' && (
                       <button onClick={() => handleUpdateCellProperty(selectedCell.id, { output: '', status: 'idle', executionCount: null })} disabled={!selectedCell.output && selectedCell.status !== 'error'} className="flex items-center gap-1.5 px-2 py-1.5 text-gray-600 dark:text-slate-300 bg-white border border-gray-300 dark:bg-[#2d2d2d] dark:border-slate-700 hover:bg-gray-100 dark:hover:bg-[#3c3c3c] disabled:opacity-30 rounded transition-colors text-xs font-medium" title="Effacer la console">
                          <XCircle size={14} /> <span className="hidden sm:inline">Effacer console</span>
                       </button>
