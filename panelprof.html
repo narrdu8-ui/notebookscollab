@@ -80,7 +80,7 @@
         // Initialisation WebSockets
         if (typeof window.io === 'function') {
           try {
-            socketRef.current = window.io();
+            socketRef.current = window.io({ transports: ['websocket'] });
             socketRef.current.on('data_updated', (newData) => setServerData(newData));
           } catch(e) {
             console.warn("WebSocket non disponible en mode aperçu.");
