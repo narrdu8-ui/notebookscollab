@@ -71,7 +71,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useRef } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Play, Plus, Trash2, Loader2, Users, Terminal, Code2, CheckCircle2, ArrowLeft, Share2, BookOpen, User, Lock, Edit2, Download, ArrowUp, ArrowDown, XCircle, Upload, LogOut, Key, Unlock, X, RotateCcw, RotateCw, Settings, Moon, Sun, Copy as CopyIcon, Scissors, ClipboardPaste, Shield, GraduationCap, AlignLeft, AlignCenter, AlignRight, Search } from 'lucide-react';
+    import { Play, Plus, Trash2, Loader2, Users, Terminal, Code2, CheckCircle2, ArrowLeft, Share2, BookOpen, User, Lock, Edit2, Download, ArrowUp, ArrowDown, XCircle, Upload, LogOut, Key, Unlock, X, RotateCcw, RotateCw, Settings, Moon, Sun, Copy as CopyIcon, Scissors, ClipboardPaste, Shield, GraduationCap, AlignLeft, AlignCenter, AlignRight, Search, Bell, PinOff, Pin } from 'lucide-react';
     import { marked } from 'marked';
 
     const DB_URL = 'db.json';       
@@ -116,6 +116,21 @@
         let hash = 0;
         for(let i = 0; i < uid.length; i++) hash += uid.charCodeAt(i);
         return colors[hash % colors.length];
+    };
+
+    const Avatar = ({ name, size = 18, role }) => {
+        if (!name) return <div style={{width: size, height: size}} className="rounded-full bg-gray-200"></div>;
+        const color = getUserColor(name);
+        const initials = name.substring(0, 2).toUpperCase();
+        return (
+            <div 
+                className="rounded-full flex items-center justify-center font-bold text-white shadow-sm flex-shrink-0"
+                style={{ backgroundColor: color, width: size, height: size, fontSize: size * 0.55 }}
+                title={name}
+            >
+                {initials}
+            </div>
+        );
     };
 
     let pyodidePromise = null;
@@ -721,6 +736,7 @@ except Exception:
       const [selectedCellId, setSelectedCellId] = useState(null);
       const [viewingUser, setViewingUser] = useState(null);
 
+      const [showNotifications, setShowNotifications] = useState(false);
       const [isDark, setIsDark] = useState(true);
       const [themeColor, setThemeColor] = useState('indigo');
       const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -1253,6 +1269,10 @@ except Exception:
             const newPermissions = { ...(activeNotebook.userPermissions || {}) };
             newPermissions[targetUser.username] = 'viewer';
             dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { sharedWith: [...activeNotebook.sharedWith, targetUser.username], userPermissions: newPermissions } } });
+            
+            const myName = (serverData.users || []).find(u => u.id === user.uid)?.username || 'Quelqu\'un';
+            const notif = { id: generateUUID(), type: 'info', message: `${myName} vous a ajouté(e) au notebook "${activeNotebook.title}".`, timestamp: Date.now(), read: false };
+            dispatchServerAction({ type: 'UPDATE_USER', payload: { userId: targetUser.id, data: { notifications: [notif, ...(targetUser.notifications || [])] } } });
         }
         setShareUsername('');
       };
@@ -1264,6 +1284,14 @@ except Exception:
             const newPermissions = { ...(activeNotebook.userPermissions || {}) };
             newPermissions[usernameToChange] = newRole;
             dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { userPermissions: newPermissions } } });
+
+            const targetUser = (serverData.users || []).find(u => u.username === usernameToChange);
+            if (targetUser) {
+               const myName = (serverData.users || []).find(u => u.id === user.uid)?.username || 'Quelqu\'un';
+               const roleStr = newRole === 'editor' ? 'Éditeur' : 'Lecteur';
+               const notif = { id: generateUUID(), type: 'info', message: `${myName} a modifié vos permissions sur "${activeNotebook.title}" (${roleStr}).`, timestamp: Date.now(), read: false };
+               dispatchServerAction({ type: 'UPDATE_USER', payload: { userId: targetUser.id, data: { notifications: [notif, ...(targetUser.notifications || [])] } } });
+            }
         }
       };
 
