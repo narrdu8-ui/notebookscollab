@@ -39,7 +39,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useRef, useMemo } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Shield, Users, BookOpen, Trash2, Key, ArrowLeft, Database, Loader2, Search, AlertTriangle, BarChart3, Activity, Bell, Eye, Download, RefreshCw, Settings, HardDrive, Wifi, WifiOff, UserPlus, UserMinus, Edit2, X, Check, ChevronDown, Filter, Clock, FileText, Layers, Share2, Lock, Unlock, GraduationCap, Mail, MessageSquare } from 'lucide-react';
+    import { Shield, Users, BookOpen, Trash2, Key, ArrowLeft, Database, Loader2, Search, AlertTriangle, BarChart3, Activity, Bell, Eye, Download, RefreshCw, Settings, HardDrive, Wifi, WifiOff, UserPlus, UserMinus, Edit2, X, Check, ChevronDown, Filter, Clock, FileText, Layers, Share2, Lock, Unlock, GraduationCap, Mail, MessageSquare, ScrollText } from 'lucide-react';
 
     const hashPassword = async (password) => {
       if (typeof crypto !== 'undefined' && crypto.subtle) {
@@ -110,6 +110,11 @@
       const [editForm, setEditForm] = useState({});
       const [sidebarOpen, setSidebarOpen] = useState(false);
       const [announceText, setAnnounceText] = useState('');
+      const [logsData, setLogsData] = useState([]);
+      const [logSearch, setLogSearch] = useState('');
+      const [logActionFilter, setLogActionFilter] = useState('all');
+      const [logUserFilter, setLogUserFilter] = useState('all');
+      const [purgeDays, setPurgeDays] = useState(7);
 
       useEffect(() => {
         let uid = localStorage.getItem('collab_notebook_uid');
@@ -121,6 +126,9 @@
           socketRef.current.on('data_updated', (newData) => {
               setServerData(newData);
               localStorage.setItem('collab_local_db', JSON.stringify(newData));
+          });
+          socketRef.current.on('logs_updated', (logs) => {
+              setLogsData(logs);
           });
         }
         
@@ -163,6 +171,11 @@
         } catch(err) {
             if (!hasLocalData) window.location.href = 'index.html';
         }
+
+        // Fetch logs
+        try {
+            fetch('./api/logs').then(r => r.ok ? r.json() : []).then(logs => setLogsData(logs)).catch(() => {});
+        } catch(e) {}
       }, []);
 
       const updateServer = (mutationFn) => {
@@ -284,6 +297,25 @@
           return list;
       }, [serverData.notebooks, nbSearch, nbOwnerFilter]);
 
+      const filteredLogs = useMemo(() => {
+          let list = logsData || [];
+          if (logSearch) list = list.filter(l => (l.details || '').toLowerCase().includes(logSearch.toLowerCase()) || (l.username || '').toLowerCase().includes(logSearch.toLowerCase()));
+          if (logActionFilter !== 'all') list = list.filter(l => l.action === logActionFilter);
+          if (logUserFilter !== 'all') list = list.filter(l => l.userId === logUserFilter);
+          return list;
+      }, [logsData, logSearch, logActionFilter, logUserFilter]);
+
+      const logActionTypes = useMemo(() => {
+          const set = new Set((logsData || []).map(l => l.action));
+          return Array.from(set).sort();
+      }, [logsData]);
+
+      const logUsers = useMemo(() => {
+          const map = {};
+          (logsData || []).forEach(l => { if (l.userId && l.username) map[l.userId] = l.username; });
+          return Object.entries(map).map(([id, name]) => ({ id, name }));
+      }, [logsData]);
+
       // Stats
       const totalUsers = serverData.users?.length || 0;
       const totalNbs = serverData.notebooks?.length || 0;
@@ -304,6 +336,7 @@
           { id: 'dashboard', icon: BarChart3, label: 'Tableau de bord' },
           { id: 'users', icon: Users, label: 'Utilisateurs', badge: totalUsers },
           { id: 'notebooks', icon: BookOpen, label: 'Notebooks', badge: totalNbs },
+          { id: 'logs', icon: ScrollText, label: 'Logs', badge: (logsData || []).length },
           { id: 'announcements', icon: Bell, label: 'Annonces' },
           { id: 'maintenance', icon: Settings, label: 'Maintenance' },
       ];
@@ -620,6 +653,86 @@
                                                 </td>
                                             </tr>
                                         )})}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* ============ LOGS ============ */}
+                {activeSection === 'logs' && (
+                    <div className="space-y-6">
+                        {/* Search & Filters */}
+                        <div className="flex flex-col sm:flex-row gap-3">
+                            <div className="relative flex-1">
+                                <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                                <input type="text" placeholder="Rechercher dans les logs..." value={logSearch} onChange={e => setLogSearch(e.target.value)} className="w-full bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-xl pl-10 pr-4 py-3 text-sm focus:outline-none focus:border-red-500 text-gray-900 dark:text-white transition-colors" />
+                            </div>
+                            <select value={logActionFilter} onChange={e => setLogActionFilter(e.target.value)} className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-red-500 text-gray-900 dark:text-white cursor-pointer">
+                                <option value="all">Toutes les actions</option>
+                                {logActionTypes.map(a => <option key={a} value={a}>{a}</option>)}
+                            </select>
+                            <select value={logUserFilter} onChange={e => setLogUserFilter(e.target.value)} className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-red-500 text-gray-900 dark:text-white cursor-pointer">
+                                <option value="all">Tous les utilisateurs</option>
+                                {logUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                            </select>
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="text-xs text-gray-500">{filteredLogs.length} log(s) affiché(s) sur {(logsData || []).length} total — Auto-purge : {'>'} 14 jours</div>
+                            <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-xl px-3 py-2">
+                                    <span className="text-xs text-gray-500">Supprimer {'>'} </span>
+                                    <input type="number" min="1" max="365" value={purgeDays} onChange={e => setPurgeDays(Math.max(1, parseInt(e.target.value) || 1))} className="w-14 bg-transparent text-sm font-mono text-gray-900 dark:text-white outline-none text-center" />
+                                    <span className="text-xs text-gray-500">jour(s)</span>
+                                    <button onClick={() => { if (window.confirm(`Supprimer tous les logs de plus de ${purgeDays} jour(s) ?`)) { if (socketRef.current) socketRef.current.emit('purge_logs_older_than', { days: purgeDays }); } }} className="bg-amber-500 hover:bg-amber-600 text-white text-xs px-3 py-1.5 rounded-lg font-medium transition-colors ml-1">Purger</button>
+                                </div>
+                                <button onClick={() => { if (window.confirm('Supprimer TOUS les logs ?')) { if (socketRef.current) socketRef.current.emit('clear_logs'); } }} className="bg-red-500 hover:bg-red-600 text-white text-xs px-4 py-2.5 rounded-xl font-medium transition-colors flex items-center gap-1.5"><Trash2 size={14}/> Reset</button>
+                            </div>
+                        </div>
+
+                        {/* Logs Table */}
+                        <div className="bg-white dark:bg-[#1e1e1e] border border-gray-200 dark:border-gray-800 rounded-2xl shadow-sm overflow-hidden">
+                            <div className="overflow-x-auto max-h-[60vh] overflow-y-auto custom-scrollbar">
+                                <table className="w-full text-left border-collapse">
+                                    <thead className="bg-gray-50 dark:bg-[#181818] sticky top-0 z-10">
+                                        <tr>
+                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Date</th>
+                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Utilisateur</th>
+                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Action</th>
+                                            <th className="p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Détails</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
+                                        {filteredLogs.length === 0 ? (
+                                            <tr><td colSpan="4" className="p-8 text-center text-sm text-gray-500 italic">Aucun log disponible.</td></tr>
+                                        ) : filteredLogs.map(log => {
+                                            const actionColors = {
+                                                'LOGIN': 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+                                                'LOGOUT': 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-400',
+                                                'REGISTER': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400',
+                                                'CREATE_NOTEBOOK': 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+                                                'DELETE_NOTEBOOK': 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+                                                'SHARE_NOTEBOOK': 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
+                                                'CHANGE_PERMISSION': 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
+                                            };
+                                            return (
+                                                <tr key={log.id} className="hover:bg-gray-50 dark:hover:bg-[#252525] transition-colors">
+                                                    <td className="p-4 text-xs text-gray-500 font-mono whitespace-nowrap">{formatDate(log.timestamp)}</td>
+                                                    <td className="p-4">
+                                                        <div className="flex items-center gap-2">
+                                                            <Avatar name={log.username} size={24} />
+                                                            <span className="text-sm text-gray-700 dark:text-gray-300 font-medium">{log.username}</span>
+                                                        </div>
+                                                    </td>
+                                                    <td className="p-4">
+                                                        <span className={`px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider ${actionColors[log.action] || 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400'}`}>{log.action}</span>
+                                                    </td>
+                                                    <td className="p-4 text-sm text-gray-600 dark:text-gray-300 max-w-[300px] truncate">{log.details}</td>
+                                                </tr>
+                                            );
+                                        })}
                                     </tbody>
                                 </table>
                             </div>
