@@ -875,7 +875,7 @@ except Exception:
 
       useEffect(() => {
         if (typeof window.io === 'function') {
-          socketRef.current = window.io();
+          socketRef.current = window.io({ transports: ['websocket'] });
           
           socketRef.current.on('data_updated', (newData) => {
             setServerData(newData);
