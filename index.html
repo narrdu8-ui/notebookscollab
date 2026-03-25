@@ -1631,16 +1631,16 @@ for key in list(globals().keys()):
 
               <div className="space-y-10 relative">
                 {selectedNotebooks.size > 0 && (
-                    <div className="fixed bottom-8 left-1/2 transform -translate-x-1/2 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white px-4 py-3 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] z-[99999] flex items-center gap-4 animate-in slide-in-from-bottom-5 fade-in duration-300">
-                        <div className="flex items-center gap-2 bg-primary-100 dark:bg-primary-900/50 text-primary-700 dark:text-primary-400 px-3 py-1.5 rounded-xl font-medium text-sm">
-                           <CheckSquare size={16} /> {selectedNotebooks.size} sélection(s)
+                    <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border border-gray-200 dark:border-slate-700 text-gray-900 dark:text-white px-5 py-3 rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] z-[99999] flex items-center gap-4 transition-all duration-300 ease-out">
+                        <div className="flex items-center gap-2 bg-primary-50 dark:bg-primary-900/40 text-primary-700 dark:text-primary-400 px-3 py-1.5 rounded-full font-semibold text-sm">
+                           <CheckCircle2 size={16} /> {selectedNotebooks.size} sélection(s)
                         </div>
                         <div className="w-px h-6 bg-gray-200 dark:bg-slate-700"></div>
-                        <button onClick={handleBulkDelete} className="bg-red-500 hover:bg-red-600 text-white px-5 py-2 rounded-xl text-sm font-medium transition-all hover:shadow-md flex items-center gap-2 group">
+                        <button onClick={handleBulkDelete} className="bg-red-500 hover:bg-red-600 text-white px-5 py-2 rounded-full text-sm font-semibold transition-all hover:shadow-lg flex items-center gap-2 group">
                             <Trash2 size={16} className="group-hover:scale-110 transition-transform" /> Supprimer
                         </button>
-                        <button onClick={() => setSelectedNotebooks(new Set())} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-xl">
-                            <X size={18} />
+                        <button onClick={() => setSelectedNotebooks(new Set())} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 p-2 rounded-full cursor-pointer">
+                            <X size={16} />
                         </button>
                     </div>
                 )}
@@ -1673,11 +1673,11 @@ for key in list(globals().keys()):
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {sharedFilteredNotebooks.map(nb => {
                          const owner = serverData.users.find(u => u.id === nb.ownerUid);
-                         const isPrivileged = hasAdminRights; // Only admin can delete/select shared notebooks
+                         const isSuperAdmin = userData?.role === 'admin';
                          return (
                           <div key={nb.id} onClick={() => openNotebook(nb.id)} className="bg-white dark:bg-slate-900 border border-primary-100 dark:border-primary-900/50 p-5 rounded-xl hover:border-primary-500 cursor-pointer transition-all hover:-translate-y-1 relative overflow-hidden shadow-sm flex flex-col justify-between">
                             <div className="absolute top-0 left-0 w-1 h-full bg-primary-500 z-20"></div>
-                            {isPrivileged && (
+                            {isSuperAdmin && (
                                 <div className="absolute top-4 left-4 z-20">
                                     <input type="checkbox" checked={selectedNotebooks.has(nb.id)} onChange={(e) => handleToggleSelectNotebook(e, nb.id)} onClick={(e) => e.stopPropagation()} className="w-4 h-4 rounded text-primary-600 cursor-pointer" />
                                 </div>
@@ -2048,24 +2048,26 @@ for key in list(globals().keys()):
                     <span className="text-xs text-gray-400 dark:text-slate-400 font-semibold mb-3 block uppercase tracking-wider">Partagé avec :</span>
                     <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
                       {(activeNotebook.sharedWith || []).map(u => {
-                         const sharedUserObj = serverData.users.find(user => user.username === u);
+                         const userName = typeof u === 'string' ? u : (u?.username || 'Inconnu');
+                         if (userName === 'Inconnu') return null;
+                         const sharedUserObj = serverData.users.find(user => user.username === userName);
                          return (
-                        <div key={u} className="flex justify-between items-center bg-gray-50 dark:bg-slate-800 px-3 py-2.5 rounded-lg border border-gray-200 dark:border-slate-700">
+                        <div key={userName} className="flex justify-between items-center bg-gray-50 dark:bg-slate-800 px-3 py-2.5 rounded-lg border border-gray-200 dark:border-slate-700">
                           <div className="flex items-center gap-2 cursor-pointer hover:underline" onClick={() => { if(sharedUserObj) setViewingUser(sharedUserObj); }}>
                             <User size={16} className="text-primary-500" />
-                            <span className="text-sm text-gray-700 dark:text-slate-200 font-medium">{u}</span>
+                            <span className="text-sm text-gray-700 dark:text-slate-200 font-medium">{userName}</span>
                           </div>
                           <div className="flex items-center gap-2">
                              {(activeNotebook.ownerUid === user?.uid || hasAdminRights) ? (
-                                 <select value={(activeNotebook.userPermissions || {})[u] || 'editor'} onChange={(e) => handleChangeShareRole(u, e.target.value)} className="text-xs bg-white dark:bg-[#2d2d2d] border border-gray-300 dark:border-slate-600 rounded px-1 py-1 outline-none focus:border-primary-500 text-gray-700 dark:text-slate-200">
+                                 <select value={(activeNotebook.userPermissions || {})[userName] || 'editor'} onChange={(e) => handleChangeShareRole(userName, e.target.value)} className="text-xs bg-white dark:bg-[#2d2d2d] border border-gray-300 dark:border-slate-600 rounded px-1 py-1 outline-none focus:border-primary-500 text-gray-700 dark:text-slate-200">
                                     <option value="editor">Éditeur</option>
                                     <option value="viewer">Lecteur</option>
                                  </select>
                              ) : (
-                                 <span className="text-xs text-gray-500 dark:text-slate-400">{(activeNotebook.userPermissions || {})[u] === 'viewer' ? 'Lecteur' : 'Éditeur'}</span>
+                                 <span className="text-xs text-gray-500 dark:text-slate-400">{(activeNotebook.userPermissions || {})[userName] === 'viewer' ? 'Lecteur' : 'Éditeur'}</span>
                              )}
                              {(activeNotebook.ownerUid === user?.uid || hasAdminRights) && (
-                                <button onClick={() => handleRemoveShare(u)} className="text-gray-400 hover:text-red-500 transition-colors p-1 hover:bg-gray-200 dark:hover:bg-slate-700 rounded"><X size={16}/></button>
+                                <button onClick={() => handleRemoveShare(userName)} className="text-gray-400 hover:text-red-500 transition-colors p-1 hover:bg-gray-200 dark:hover:bg-slate-700 rounded"><X size={16}/></button>
                              )}
                           </div>
                         </div>
