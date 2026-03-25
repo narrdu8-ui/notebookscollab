@@ -502,7 +502,7 @@ def run():
     };
 
     // --- CELLULE ---
-    const Cell = ({ cell, isSelected, onSelect, onUpdateProperty, onUpdateCode, onUpdateCursor, remoteCursors, pyodide, isPyodideLoading, isMonacoReady, registerRun, handleSnapshot, isDark, hasAdminRights, getNextExecutionCount }) => {
+    const Cell = ({ cell, isSelected, onSelect, onUpdateProperty, onUpdateCode, onUpdateCursor, remoteCursors, pyodide, isPyodideLoading, isMonacoReady, registerRun, handleSnapshot, isDark, hasAdminRights, getNextExecutionCount, isViewer }) => {
       const cellType = cell.type || 'code';
       const isLocked = cell.locked || false;
       const isCode = cellType === 'code';
@@ -511,7 +511,7 @@ def run():
       const [isFocused, setIsFocused] = useState(false);
       const [isEditingContent, setIsEditingContent] = useState((cellType === 'markdown' || cellType === 'heading') ? !cell.code : false);
 
-      const enforceLock = isLocked;
+      const enforceLock = isLocked || isViewer;
 
       useEffect(() => {
         if (cell.code !== localCode) {
@@ -713,6 +713,7 @@ except Exception:
     function App() {
       const [user, setUser] = useState(null);
       const [serverData, setServerData] = useState({ users: [], notebooks: [], cells: [], cursors: {} });
+      const [activeUsers, setActiveUsers] = useState([]);
       const [isAuthLoading, setIsAuthLoading] = useState(true);
       const [remoteCursorsState, setRemoteCursorsState] = useState({});
       
@@ -861,6 +862,10 @@ except Exception:
             injectCursorStyle(c.userId, c.username, c.color);
             setRemoteCursorsState(prev => ({ ...prev, [c.userId]: c }));
           });
+
+          socketRef.current.on('active_users_update', (usersList) => {
+            setActiveUsers(usersList);
+          });
         }
 
         const localDb = localStorage.getItem('collab_local_db');
@@ -900,6 +905,21 @@ except Exception:
           }, 5000);
           return () => clearInterval(interval);
       }, []);
+
+      useEffect(() => {
+          if (currentNbId && user && socketRef.current && serverData.users && serverData.users.length > 0) {
+              const uData = serverData.users.find(u => u.id === user.uid);
+              if (uData) {
+                  socketRef.current.emit('join_notebook', { 
+                      notebookId: currentNbId, 
+                      user: { uid: uData.id, username: uData.username, color: getUserColor(uData.id) } 
+                  });
+              }
+          } else if (!currentNbId && socketRef.current) {
+              socketRef.current.emit('leave_notebook');
+              setActiveUsers([]);
+          }
+      }, [currentNbId, user, serverData.users]);
 
       useEffect(() => {
         const handleKeyDown = (e) => {
@@ -1226,9 +1246,21 @@ except Exception:
         
         const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId);
         if (activeNotebook && !activeNotebook.sharedWith.includes(targetUser.username)) {
-            dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { sharedWith: [...activeNotebook.sharedWith, targetUser.username] } } });
+            const newPermissions = { ...(activeNotebook.userPermissions || {}) };
+            newPermissions[targetUser.username] = 'viewer';
+            dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { sharedWith: [...activeNotebook.sharedWith, targetUser.username], userPermissions: newPermissions } } });
         }
         setShareUsername('');
+      };
+
+      const handleChangeShareRole = (usernameToChange, newRole) => {
+        if (!currentNbId) return;
+        const activeNotebook = (serverData.notebooks || []).find(n => n.id === currentNbId);
+        if (activeNotebook && activeNotebook.sharedWith.includes(usernameToChange)) {
+            const newPermissions = { ...(activeNotebook.userPermissions || {}) };
+            newPermissions[usernameToChange] = newRole;
+            dispatchServerAction({ type: 'UPDATE_NOTEBOOK', payload: { notebookId: currentNbId, data: { userPermissions: newPermissions } } });
+        }
       };
 
       const handleRemoveShare = (usernameToRemove) => {
@@ -1410,11 +1442,12 @@ for key in list(globals().keys()):
       const activeCells = (serverData.cells || []).filter(c => c.notebookId === currentNbId).sort((a, b) => a.order - b.order);
 
       const hasAdminRights = userData?.role === 'admin' || userData?.role === 'prof';
+      const isViewer = activeNotebook?.ownerUid !== user?.uid && !hasAdminRights && (activeNotebook?.userPermissions || {})[userData?.username] === 'viewer';
       const isCopiedNotebook = !!activeNotebook?.templateSourceId;
-      const canShareNotebook = hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canShare !== false;
-      const canGenCodeNotebook = hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canGenerateCode !== false;
-      const canCreateCellsNotebook = hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canCreate !== false;
-      const canUnlockCellsNotebook = hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canUnlock !== false;
+      const canShareNotebook = !isViewer && (hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canShare !== false);
+      const canGenCodeNotebook = !isViewer && (hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canGenerateCode !== false);
+      const canCreateCellsNotebook = !isViewer && (hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canCreate !== false);
+      const canUnlockCellsNotebook = !isViewer && (hasAdminRights || !isCopiedNotebook || activeNotebook?.permissions?.canUnlock !== false);
 
       const selectedCell = activeCells.find(c => c.id === selectedCellId);
       const isSelectedCellFirst = activeCells[0]?.id === selectedCellId;
@@ -1679,6 +1712,23 @@ for key in list(globals().keys()):
                   <button id="btn-undo" onClick={handleUndo} disabled={historyPast.length === 0} className="p-1 sm:p-1.5 text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent rounded transition-colors" title="Annuler l'action globale (Ctrl+Z)"><RotateCcw size={16} /></button>
                   <button id="btn-redo" onClick={handleRedo} disabled={historyFuture.length === 0} className="p-1 sm:p-1.5 text-gray-400 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 disabled:opacity-30 disabled:hover:bg-transparent rounded transition-colors" title="Rétablir l'action globale (Ctrl+Y)"><RotateCw size={16} /></button>
                 </div>
+                
+                <div className="flex items-center ml-4 -space-x-2">
+                   {activeUsers.slice(0, 5).map(onlineUser => (
+                       <div key={onlineUser.userId} 
+                            className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white text-xs border-2 border-white dark:border-[#161b22] shadow-sm z-10"
+                            style={{ backgroundColor: onlineUser.color }}
+                            title={onlineUser.username + " (En ligne)"}
+                       >
+                           {onlineUser.username.substring(0, 2).toUpperCase()}
+                       </div>
+                   ))}
+                   {activeUsers.length > 5 && (
+                       <div className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-gray-700 bg-gray-200 text-xs border-2 border-white dark:border-[#161b22] shadow-sm z-10">
+                           +{activeUsers.length - 5}
+                       </div>
+                   )}
+                </div>
               </div>
               
               <div className="flex items-center gap-2 sm:gap-4 overflow-x-auto no-scrollbar pb-1 sm:pb-0 w-full sm:w-auto">
@@ -1821,6 +1871,7 @@ for key in list(globals().keys()):
                     isDark={isDark}
                     hasAdminRights={hasAdminRights}
                     getNextExecutionCount={getNextExecutionCount}
+                    isViewer={isViewer}
                   />
                 )})}
                 {(canCreateCellsNotebook || hasAdminRights) && (
@@ -1931,7 +1982,19 @@ for key in list(globals().keys()):
                             <User size={16} className="text-primary-500" />
                             <span className="text-sm text-gray-700 dark:text-slate-200 font-medium">{u}</span>
                           </div>
-                          <button onClick={() => handleRemoveShare(u)} className="text-gray-400 hover:text-red-500 transition-colors p-1 hover:bg-gray-200 dark:hover:bg-slate-700 rounded"><X size={16}/></button>
+                          <div className="flex items-center gap-2">
+                             {(activeNotebook.ownerUid === user?.uid || hasAdminRights) ? (
+                                 <select value={(activeNotebook.userPermissions || {})[u] || 'editor'} onChange={(e) => handleChangeShareRole(u, e.target.value)} className="text-xs bg-white dark:bg-[#2d2d2d] border border-gray-300 dark:border-slate-600 rounded px-1 py-1 outline-none focus:border-primary-500 text-gray-700 dark:text-slate-200">
+                                    <option value="editor">Éditeur</option>
+                                    <option value="viewer">Lecteur</option>
+                                 </select>
+                             ) : (
+                                 <span className="text-xs text-gray-500 dark:text-slate-400">{(activeNotebook.userPermissions || {})[u] === 'viewer' ? 'Lecteur' : 'Éditeur'}</span>
+                             )}
+                             {(activeNotebook.ownerUid === user?.uid || hasAdminRights) && (
+                                <button onClick={() => handleRemoveShare(u)} className="text-gray-400 hover:text-red-500 transition-colors p-1 hover:bg-gray-200 dark:hover:bg-slate-700 rounded"><X size={16}/></button>
+                             )}
+                          </div>
                         </div>
                       )})}
                     </div>
